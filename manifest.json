@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.apachaiz.quay",
+  "name": "Quay",
+  "version": "1.0.0",
+  "author": "ApachaiZ",
+  "license": "MIT",
+  "description": "Quay is a floating app shelf for Omarchy with pinned favorites, configurable icon size, zoom, gap and padding, drag reordering, and window controls",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Quay.qml"
+  }
+}
