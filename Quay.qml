@@ -160,8 +160,10 @@ Item {
   }
 
   // Screen the Quay lives on: the configured monitor name (from settings), or
-  // fall back to the widest monitor (the main horizontal display).
-  function selectedScreen() {
+  // fall back to the widest monitor (the main horizontal display). Kept as a
+  // property binding (not a function call) so it re-evaluates when
+  // Quickshell.screens changes, e.g. after a suspend or a monitor hotplug.
+  readonly property var targetScreen: {
     var screens = Quickshell.screens
     if (!screens || screens.length === 0) return null
     if (root.screenPref) {
@@ -177,7 +179,7 @@ Item {
   }
 
   readonly property int screenHeight: {
-    var screen = root.selectedScreen()
+    var screen = root.targetScreen
     return screen && screen.height > 0 ? screen.height : 1080
   }
   readonly property int panelMaxHeight: Math.max(Style.space(320), root.screenHeight - Style.space(150))
@@ -1121,11 +1123,32 @@ Item {
     }
   }
 
+  // Both windows are single layer surfaces tied to one screen. When an
+  // output disappears — suspend/resume, monitor hotplug, or Hyprland's
+  // FALLBACK placeholder — the compositor destroys the surface. Quickshell
+  // keeps the QML object alive but never maps it again, leaving the dock
+  // invisible (its IPC still answers) until the whole shell restarts.
+  // Toggling visible on every screens change forces a fresh wl_surface
+  // against the (now valid) targetScreen.
+  property bool surfacesEnabled: true
+  Connections {
+    target: Quickshell
+    function onScreensChanged() {
+      root.surfacesEnabled = false
+      surfaceRemapTimer.restart()
+    }
+  }
+  Timer {
+    id: surfaceRemapTimer
+    interval: 100
+    onTriggered: root.surfacesEnabled = true
+  }
+
   // Full-screen transparent scrim: closes the Quay when clicking outside it.
   PanelWindow {
     id: scrimWindow
-    visible: root.overlayActive
-    screen: root.selectedScreen()
+    visible: root.surfacesEnabled && root.overlayActive
+    screen: root.targetScreen
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "quay-scrim"
@@ -1141,8 +1164,8 @@ Item {
 
   PanelWindow {
     id: quayWindow
-    visible: true
-    screen: root.selectedScreen()
+    visible: root.surfacesEnabled
+    screen: root.targetScreen
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "quay"
