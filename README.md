@@ -133,6 +133,21 @@ LICENSE
 - The blur effect and its offscreen layer are only instantiated when the blur
   animation is selected and Quay is visible.
 
+## Dropdown interoperability
+
+[Dropdown](https://github.com/ApachaiZ/omarchy-dropdown) ≥ 0.7.9 parks hidden
+application windows on a special workspace and tags them
+`dropdown-hidden` in Hyprland. Quay skips clients carrying that tag when it
+builds its running-app list, so a hidden Dropdown app does not appear as
+running in the shelf and is not offered in its window list.
+
+The tag is removed as soon as Dropdown reveals or releases the window, so the
+app shows up normally again. No configuration is needed on either side.
+
+Hyprland has no `skip_taskbar` flag; other docks can use the same convention
+by ignoring entries whose `tags` array in `hyprctl clients -j` contains
+`dropdown-hidden`.
+
 ## Notes
 
 - Quay floats over windows (no space reserved); it is not an autohiding
