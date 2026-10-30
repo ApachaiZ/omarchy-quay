@@ -304,6 +304,9 @@ Item {
       var list = JSON.parse(String(raw || ""))
       for (var i = 0; i < list.length; i++) {
         var c = list[i]
+        // Dropdown parks its hidden windows with this tag; do not list them.
+        var tags = Array.isArray(c.tags) ? c.tags : []
+        if (tags.indexOf("dropdown-hidden") >= 0) continue
         var cls = String(c.class || "").toLowerCase()
         var icls = String(c.initialClass || "").toLowerCase()
         if (cls && out.indexOf(cls) < 0) out.push(cls)
