@@ -1781,9 +1781,20 @@ Item {
             }
 
             ToolTip {
+              id: nameTooltip
               visible: !root.dragActive && root.showName && (iconHover.hovered || (root.keySel === index && root.opened))
               text: name
               delay: iconHover.hovered ? 400 : 0
+
+              // The application name comes from a desktop entry, so it must
+              // not be parsed as rich text by the default AutoText tooltip.
+              contentItem: Text {
+                textFormat: Text.PlainText
+                text: nameTooltip.text
+                font: nameTooltip.font
+                wrapMode: Text.Wrap
+                color: nameTooltip.palette.toolTipText
+              }
             }
           }
         }
