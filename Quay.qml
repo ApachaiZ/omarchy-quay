@@ -844,6 +844,7 @@ Item {
     height: 28
 
     Text {
+      textFormat: Text.PlainText
       anchors.centerIn: parent
       text: title
       color: Commons.Color.popups.text
@@ -887,6 +888,7 @@ Item {
     }
 
     Text {
+      textFormat: Text.PlainText
       anchors.left: parent.left
       anchors.leftMargin: 8
       anchors.verticalCenter: parent.verticalCenter
@@ -918,6 +920,7 @@ Item {
           border.width: 1
 
           Text {
+            textFormat: Text.PlainText
             anchors.centerIn: parent
             text: choice.formatValue(modelData)
             color: choice.current === modelData ? Commons.Color.accent : Qt.darker(Commons.Color.popups.text, 1.35)
@@ -947,6 +950,7 @@ Item {
         radius: 6
         border.color: Commons.Color.popups.border
         Text {
+          textFormat: Text.PlainText
           anchors.centerIn: parent
           text: "‹"
           color: Commons.Color.accent
@@ -961,6 +965,7 @@ Item {
       }
 
       Text {
+        textFormat: Text.PlainText
         width: Math.max(44, choice.width - 104 - 56)
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
@@ -977,6 +982,7 @@ Item {
         radius: 6
         border.color: Commons.Color.popups.border
         Text {
+          textFormat: Text.PlainText
           anchors.centerIn: parent
           text: "›"
           color: Commons.Color.accent
@@ -1393,6 +1399,7 @@ Item {
             border.width: 1
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "⚙"
               color: Commons.Color.popups.text
@@ -1450,6 +1457,7 @@ Item {
               }
 
               Text {
+                textFormat: Text.PlainText
                 anchors.left: parent.left
                 anchors.leftMargin: 42
                 anchors.right: parent.right
@@ -1489,6 +1497,7 @@ Item {
                 border.width: 1
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.centerIn: parent
                   text: pinButton.pinned ? "✓" : "📌"
                   color: pinButton.pinned ? Commons.Color.accent : Commons.Color.popups.text
@@ -1855,6 +1864,7 @@ Item {
           }
 
           Text {
+            textFormat: Text.PlainText
             anchors.centerIn: parent
             text: "☰"
             color: Commons.Color.popups.text
@@ -2005,6 +2015,7 @@ Item {
         spacing: 6
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           text: root.detailEntry ? root.detailEntry.name : ""
           color: Commons.Color.popups.text
@@ -2015,6 +2026,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           visible: root.detailDesktopEntry && String(root.detailDesktopEntry.genericName || "") !== ""
           width: parent.width
           text: root.detailDesktopEntry ? String(root.detailDesktopEntry.genericName || "") : ""
@@ -2025,6 +2037,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           visible: root.detailDesktopEntry && String(root.detailDesktopEntry.comment || "") !== ""
           width: parent.width
           text: root.detailDesktopEntry ? String(root.detailDesktopEntry.comment || "") : ""
@@ -2041,6 +2054,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           visible: root.detailDesktopEntry && String(root.detailDesktopEntry.execString || "") !== ""
           width: parent.width
           text: root.detailDesktopEntry ? ("Exec : " + String(root.detailDesktopEntry.execString || "")) : ""
@@ -2051,6 +2065,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           text: root.detailEntry ? ("Fichier : " + Model.normalizeId(root.detailEntry.id) + ".desktop") : ""
           color: Commons.Color.popups.text
@@ -2118,6 +2133,7 @@ Item {
             color: scrRow.highlighted ? Qt.rgba(1, 1, 1, 0.14) : (scrHover.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
 
             Text {
+              textFormat: Text.PlainText
               anchors.left: parent.left
               anchors.leftMargin: 10
               anchors.right: parent.right
@@ -2176,6 +2192,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           leftPadding: 10
           rightPadding: 10

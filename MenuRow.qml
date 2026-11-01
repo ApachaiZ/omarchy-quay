@@ -19,6 +19,7 @@ Rectangle {
   color: row.highlighted ? Qt.rgba(1, 1, 1, 0.14) : (hover.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
 
   Text {
+    textFormat: Text.PlainText
     visible: row.icon !== ""
     anchors.left: parent.left
     anchors.leftMargin: 8
@@ -32,6 +33,7 @@ Rectangle {
   }
 
   Text {
+    textFormat: Text.PlainText
     anchors.left: parent.left
     anchors.leftMargin: row.icon !== "" ? 32 : 10
     anchors.right: parent.right
