@@ -2,6 +2,8 @@
 
 ![Omarchy Quay — your apps, one quay](preview.png)
 
+[![Dropdown integration](https://img.shields.io/badge/Dropdown-0.7.9%2B-4c8bf5)](https://github.com/ApachaiZ/omarchy-dropdown)
+
 A floating app shelf for [Omarchy](https://omarchy.org), in the spirit of GNOME's
 Dash to Dock / the macOS Dock. Quay is a berth for the apps you keep close:
 pinned, searchable, reorderable, and light on the shell.
@@ -9,6 +11,9 @@ pinned, searchable, reorderable, and light on the shell.
 - **ALT + SPACE** toggles Quay at the bottom of the screen.
 - Hover reveal is optional (default On). Turning it off disables only the
   bottom-edge hover; **ALT + SPACE** and the IPC/CLI toggle always open Quay.
+- **Dropdown-aware**: parked Dropdown apps carry the `dropdown-hidden` tag and
+  stay out of Quay's running list and window menu. See
+  [Dropdown compatibility](#dropdown-compatibility).
 - Pinned favorites, persisted in `~/.config/omarchy/quay.json`.
 - Icons magnify on hover (1.8× by default). Icon size (32–64 px in 4 px
   steps), hover zoom (1.3×/1.5×/1.8×), icon gap (0–24 px), and
@@ -34,6 +39,28 @@ pinned, searchable, reorderable, and light on the shell.
 - The app picker scrolls with the mouse wheel and keeps Quay open while
   you browse or change preferences.
 
+## Dropdown compatibility
+
+Quay and [Dropdown](https://github.com/ApachaiZ/omarchy-dropdown) are built to
+work together. Dropdown hides an app by parking its real window on a Hyprland
+special workspace and tagging it **`dropdown-hidden`**. Quay reads that tag
+from `hyprctl clients -j` and leaves the window out of its running-app list
+and its window menu. Revealing, popping out or releasing the app removes the
+tag and Quay lists it again.
+
+| Dropdown state | Window tag | Quay |
+| --- | --- | --- |
+| Visible | — | shown as running |
+| Hidden (parked) | `dropdown-hidden` | hidden from the shelf |
+| Revealed, released or restored | — | shown again |
+
+- Dropdown **≥ 0.7.9** adds the tag; Quay **≥ 1.0.1** filters it (Quay 1.1.0
+  is current).
+- No configuration is needed on either side: install one, the other, or both.
+- Hyprland has no `skip_taskbar` flag. Any dock or launcher can use the same
+  convention by ignoring clients whose `tags` array in
+  `hyprctl clients -j` contains `dropdown-hidden`.
+
 ## Keyboard
 
 When Quay is summoned (ALT + SPACE), it grabs keyboard focus:
@@ -58,6 +85,8 @@ When Quay is summoned (ALT + SPACE), it grabs keyboard focus:
 
 - Omarchy (uses the `omarchy-shell` Quickshell framework and its IPC).
 - Hyprland (for the layer-shell window and the ALT + SPACE binding).
+- Optional: Dropdown ≥ 0.7.9, so parked Dropdown windows are filtered out of
+  the shelf (see [Dropdown compatibility](#dropdown-compatibility)).
 
 ## Install
 
@@ -140,21 +169,6 @@ LICENSE
 - No network access and no elevated privileges.
 - The blur effect and its offscreen layer are only instantiated when the blur
   animation is selected and Quay is visible.
-
-## Dropdown interoperability
-
-[Dropdown](https://github.com/ApachaiZ/omarchy-dropdown) ≥ 0.7.9 parks hidden
-application windows on a special workspace and tags them
-`dropdown-hidden` in Hyprland. Quay skips clients carrying that tag when it
-builds its running-app list, so a hidden Dropdown app does not appear as
-running in the shelf and is not offered in its window list.
-
-The tag is removed as soon as Dropdown reveals or releases the window, so the
-app shows up normally again. No configuration is needed on either side.
-
-Hyprland has no `skip_taskbar` flag; other docks can use the same convention
-by ignoring entries whose `tags` array in `hyprctl clients -j` contains
-`dropdown-hidden`.
 
 ## Notes
 
