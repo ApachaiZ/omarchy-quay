@@ -65,6 +65,7 @@ Item {
   property string screenPref: ""        // "" = auto (widest), else monitor name
   property int hideDelay: 1500          // ms the Quay/menus stay after hover ends
   property bool showName: false         // tooltip with the app name on hover/keyboard selection
+  property bool showOnHover: true       // bottom hotspot reveals Quay on pointer hover
   property int iconSize: 48             // base icon edge in px
   property real zoom: 1.8               // hovered icon scale
   property int paddingX: 12             // horizontal card padding
@@ -480,7 +481,7 @@ Item {
   function prefsRows() {
     var rows = [prefsAuto]
     for (var i = 0; i < prefsScreens.count; i++) rows.push(prefsScreens.itemAt(i))
-    rows.push(prefsHideDelay, prefsShowName)
+    rows.push(prefsHideDelay, prefsShowName, prefsShowOnHover)
     rows.push(prefsIconSize, prefsZoom, prefsGap, prefsPadX, prefsPadY)
     rows.push(prefsAnimMode, prefsSpeed)
     return rows
@@ -606,6 +607,11 @@ Item {
     root.saveSettings()
   }
 
+  function setShowOnHover(on) {
+    root.showOnHover = on
+    root.saveSettings()
+  }
+
   function setIconSize(size) {
     var value = parseInt(size, 10)
     if (!isFinite(value) || value < 24 || value > 96) return
@@ -652,7 +658,7 @@ Item {
   }
 
   function saveSettings() {
-    var json = JSON.stringify({ screen: root.screenPref, hideDelay: root.hideDelay, animMode: root.animMode, animSpeed: root.animSpeed, showName: root.showName, iconSize: root.iconSize, zoom: root.zoom, paddingX: root.paddingX, paddingY: root.paddingY, iconSpacing: root.iconSpacing })
+    var json = JSON.stringify({ screen: root.screenPref, hideDelay: root.hideDelay, animMode: root.animMode, animSpeed: root.animSpeed, showName: root.showName, showOnHover: root.showOnHover, iconSize: root.iconSize, zoom: root.zoom, paddingX: root.paddingX, paddingY: root.paddingY, iconSpacing: root.iconSpacing })
     settingsView.setText(json + "\n")
   }
 
@@ -671,7 +677,10 @@ Item {
     // An open panel keeps the Quay alive even when the pointer is over a
     // child surface the hover handler cannot see (or briefly leaves it while
     // scrolling). Panels close explicitly, not through the hover timer.
-    var show = root.windowHover || root.dragActive || root.panelOpen
+    // Pointer reveal is optional; an already-open Quay (shortcut or an
+    // existing hover) still stays alive while the pointer is over it.
+    var keepAlive = root.windowHover || root.dragActive || root.panelOpen
+    var show = keepAlive && (root.showOnHover || root.hovering || root.opened)
     if (show) {
       root.hovering = true
       root.sliding = false
@@ -689,6 +698,10 @@ Item {
   onDetailIndexChanged: refreshHovering()
   onPrefsOpenChanged: refreshHovering()
   onDragActiveChanged: refreshHovering()
+  onShowOnHoverChanged: {
+    if (!root.showOnHover) root.edgeHover = false
+    root.refreshHovering()
+  }
 
   // Keyboard focus follows the ALT + SPACE summon: prime briefly with Exclusive
   // (the Quay window is always mapped, so OnDemand alone never re-grabs
@@ -1021,6 +1034,7 @@ Item {
         var as = String(obj.animSpeed || "")
         if (["fast", "normal", "slow"].indexOf(as) >= 0) root.animSpeed = as
         root.showName = obj.showName === true
+        root.showOnHover = obj.showOnHover !== false
         var size = parseInt(obj.iconSize, 10)
         if (size >= 24 && size <= 96) root.iconSize = size
         var zoom = Number(obj.zoom)
@@ -1503,7 +1517,8 @@ Item {
       }
     }
 
-    // ---- Hotspot : fine bande en bas, toujours présente, révèle le Quay au survol ----
+    // ---- Hotspot: thin always-present strip. It reveals Quay on hover when
+    // ---- Hover reveal is On; ALT + SPACE still opens it when Off ----
     Rectangle {
       id: hotspot
       anchors.bottom: parent.bottom
@@ -1513,7 +1528,7 @@ Item {
       color: "transparent"
       HoverHandler {
         id: hotspotHover
-        onHoveredChanged: root.edgeHover = hotspotHover.hovered || cardHover.hovered
+        onHoveredChanged: root.edgeHover = root.showOnHover && (hotspotHover.hovered || cardHover.hovered)
       }
     }
 
@@ -1598,7 +1613,7 @@ Item {
       HoverHandler {
         id: cardHover
         onHoveredChanged: {
-          root.edgeHover = hotspotHover.hovered || cardHover.hovered
+          root.edgeHover = root.showOnHover && (hotspotHover.hovered || cardHover.hovered)
           if (!hovered) root.hoveredIndex = -1
         }
       }
@@ -2150,6 +2165,26 @@ Item {
           options: ["On", "Off"]
           current: root.showName ? "On" : "Off"
           onPicked: root.setShowName(value === "On")
+        }
+
+        PrefsChoice {
+          id: prefsShowOnHover
+          label: "Hover reveal"
+          options: ["On", "Off"]
+          current: root.showOnHover ? "On" : "Off"
+          onPicked: root.setShowOnHover(value === "On")
+        }
+
+        Text {
+          width: parent.width
+          leftPadding: 10
+          rightPadding: 10
+          text: "ALT + SPACE always opens Quay."
+          color: Commons.Color.popups.text
+          opacity: 0.65
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
         }
 
         }

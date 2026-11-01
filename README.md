@@ -7,6 +7,8 @@ Dash to Dock / the macOS Dock. Quay is a berth for the apps you keep close:
 pinned, searchable, reorderable, and light on the shell.
 
 - **ALT + SPACE** toggles Quay at the bottom of the screen.
+- Hover reveal is optional (default On). Turning it off disables only the
+  bottom-edge hover; **ALT + SPACE** and the IPC/CLI toggle always open Quay.
 - Pinned favorites, persisted in `~/.config/omarchy/quay.json`.
 - Icons magnify on hover (1.8× by default). Icon size (32–64 px in 4 px
   steps), hover zoom (1.3×/1.5×/1.8×), icon gap (0–24 px), and
@@ -93,13 +95,19 @@ scripted setups.
 ## Preferences
 
 Right-click the Quay background to open the preferences. The panel is split
-into three equal columns (Placement, Appearance, Motion) with centered
+into three equal columns (Placement/Behavior, Appearance, Motion) with centered
 section titles and vertical separators. Arrow keys move between rows and
 left/right adjust the focused value; Enter cycles it. Icon size, hover zoom,
-icon gap, horizontal and vertical padding, animation, hide delay, screen, and
-the name tooltip are persisted in `~/.config/omarchy/quay-settings.json`. The
-Quay width is derived from the selected icon size, zoom, gap, and padding; it
-does not change while an icon is magnified.
+icon gap, horizontal and vertical padding, animation, hide delay, **hover
+reveal**, screen, and the name tooltip are persisted in
+`~/.config/omarchy/quay-settings.json`. The Quay width is derived from the
+selected icon size, zoom, gap, and padding; it does not change while an icon
+is magnified.
+
+**Hover reveal → Off** removes only the bottom-edge pointer reveal. The
+**ALT + SPACE** shortcut and `omarchy-shell shell toggle io.github.apachaiz.quay`
+still open Quay; the setting is stored as `"showOnHover": false` in the
+settings file.
 
 ## Uninstall
 
