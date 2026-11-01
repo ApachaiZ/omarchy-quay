@@ -4,9 +4,9 @@
 
 [![Dropdown integration](https://img.shields.io/badge/Dropdown-0.7.9%2B-4c8bf5)](https://github.com/ApachaiZ/omarchy-dropdown)
 
-A floating app shelf for [Omarchy](https://omarchy.org), in the spirit of GNOME's
-Dash to Dock / the macOS Dock. Quay is a berth for the apps you keep close:
-pinned, searchable, reorderable, and light on the shell.
+A floating app shelf for [Omarchy](https://omarchy.org). Quay is a berth for
+the apps you keep close: pinned, searchable, reorderable, and light on the
+shell.
 
 - **ALT + SPACE** toggles Quay at the bottom of the screen.
 - Hover reveal is optional (default On). Turning it off disables only the
