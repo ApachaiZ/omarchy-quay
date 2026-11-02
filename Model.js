@@ -1,4 +1,6 @@
-// Quay model: favorites persistence + resolution against the desktop-entry DB.
+// Quay model: favorites persistence, desktop-entry resolution, search, and
+// safe Exec parsing. Pure functions only, so the file can be unit-tested with
+// Node as well as imported by Quay.qml.
 
 function normalizeId(id) {
   var value = String(id || "").trim()
@@ -13,7 +15,7 @@ function defaultFavorites() {
 
 // Build an id -> entry map from DesktopEntries.applications.values.
 function entryIndex(values) {
-  var index = {}
+  var index = Object.create(null)
   var list = values || []
   for (var i = 0; i < list.length; i++) {
     var entry = list[i]
@@ -75,11 +77,11 @@ function parseExec(command) {
     }
     if (quote) {
       if (ch === "\\") { escape = true; continue }
-      if (ch === '"') { quote = false; continue }
+      if (ch === "\"") { quote = false; continue }
       token = (token === null ? "" : token) + ch
       continue
     }
-    if (ch === '"') {
+    if (ch === "\"") {
       quote = true
       if (token === null) token = ""
       continue
@@ -133,22 +135,137 @@ function slotWidth(iconSize, zoom, spacing) {
   return Math.ceil(size * (z + neighbor) / 2) + gap
 }
 
-// Sorted, search-filtered list of installed apps for the "add to Quay" picker.
+// ---- Application search ----------------------------------------------------
+
+// Remove diacritics so "e" matches "é", and split camelCase / separators so
+// "org.gnome.Nautilus" and "gnome nautilus" both match sensibly.
+function normalizeSearch(value) {
+  // Split camelCase before lowercasing so "LibreOffice" becomes
+  // "libre office" rather than one opaque token.
+  var text = String(value || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+  try {
+    text = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  } catch (e) {
+    // Older QML runtimes may not expose String.normalize; ASCII still works.
+  }
+  return text
+    .replace(/[._:/\\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function searchWords(value) {
+  var text = normalizeSearch(value)
+  return text ? text.split(" ") : []
+}
+
+function entryName(entry) {
+  return String((entry && entry.name) || (entry && entry.id) || "")
+}
+
+function keywordText(entry) {
+  try {
+    if (entry && entry.keywords && typeof entry.keywords.join === "function")
+      return entry.keywords.join(" ")
+  } catch (e) {
+  }
+  return ""
+}
+
+function entrySearchText(entry) {
+  if (!entry) return ""
+  return normalizeSearch([
+    entryName(entry),
+    entry.genericName,
+    entry.comment,
+    keywordText(entry),
+    entry.id
+  ].join(" "))
+}
+
+function entryAcronym(entry) {
+  var values = searchWords([
+    entryName(entry),
+    entry && entry.genericName,
+    keywordText(entry),
+    entry && entry.id
+  ].join(" "))
+  var result = ""
+  for (var i = 0; i < values.length; i++) result += values[i].charAt(0)
+  return result
+}
+
+function termMatches(entry, term) {
+  if (!term) return true
+  var name = normalizeSearch(entryName(entry))
+  var id = normalizeSearch(entry && entry.id)
+  var haystack = entrySearchText(entry)
+  if (name.indexOf(term) >= 0) return true
+  if (id.indexOf(term) >= 0) return true
+  if (haystack.indexOf(term) >= 0) return true
+  return term.length <= 5 && entryAcronym(entry).indexOf(term) >= 0
+}
+
+function scoreEntry(entry, query) {
+  var q = normalizeSearch(query)
+  if (!q) return 0
+  var terms = q.split(" ")
+  for (var i = 0; i < terms.length; i++) {
+    if (terms[i] && !termMatches(entry, terms[i])) return -1
+  }
+
+  var name = normalizeSearch(entryName(entry))
+  var id = normalizeSearch(entry && entry.id)
+  var haystack = entrySearchText(entry)
+  var directName = name.indexOf(q)
+  var directId = id.indexOf(q)
+  if (directName === 0) return 12000 - name.length
+  if (directId === 0) return 11000 - id.length
+  if (directName > 0) return 9000 - directName * 10 - name.length
+  if (directId > 0) return 8500 - directId * 10 - id.length
+
+  var hayIndex = haystack.indexOf(q)
+  if (hayIndex >= 0) return 6500 - hayIndex
+
+  var acronym = entryAcronym(entry)
+  var acronymIndex = acronym.indexOf(q)
+  if (acronymIndex === 0) return 5000 - acronym.length
+  if (acronymIndex > 0) return 4600 - acronymIndex * 10 - acronym.length
+  return 4000 - name.length
+}
+
+function isVisibleEntry(entry) {
+  return !!(entry && entry.id && !entry.noDisplay && !entry.hidden)
+}
+
+// Sorted, fuzzy-filtered list of installed apps for the app grid.
 function sortedAppList(values, query) {
-  var q = String(query || "").toLowerCase().trim()
   var list = []
-  var ids = values || []
-  for (var i = 0; i < ids.length; i++) {
-    var e = ids[i]
-    if (!e || !e.id) continue
-    var name = String(e.name || e.id)
-    if (q && name.toLowerCase().indexOf(q) < 0) continue
-    list.push({ id: String(e.id), name: name, icon: String(e.icon || "") })
+  var entries = values || []
+  for (var i = 0; i < entries.length; i++) {
+    var entry = entries[i]
+    if (!isVisibleEntry(entry)) continue
+    var name = entryName(entry)
+    if (!name) continue
+    var score = scoreEntry(entry, query)
+    if (score < 0) continue
+    list.push({
+      id: String(entry.id),
+      name: name,
+      icon: String(entry.icon || ""),
+      genericName: String(entry.genericName || ""),
+      score: score
+    })
   }
   list.sort(function(a, b) {
+    if (query && a.score !== b.score) return b.score - a.score
     var na = a.name.toLowerCase()
     var nb = b.name.toLowerCase()
-    return na < nb ? -1 : (na > nb ? 1 : 0)
+    if (na < nb) return -1
+    if (na > nb) return 1
+    return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0)
   })
   return list
 }
@@ -163,6 +280,11 @@ if (typeof module !== "undefined") {
     parseExec: parseExec,
     iconScale: iconScale,
     slotWidth: slotWidth,
+    normalizeSearch: normalizeSearch,
+    entryName: entryName,
+    entrySearchText: entrySearchText,
+    entryAcronym: entryAcronym,
+    scoreEntry: scoreEntry,
     sortedAppList: sortedAppList
   }
 }

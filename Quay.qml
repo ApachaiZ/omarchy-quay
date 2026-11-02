@@ -20,13 +20,12 @@ Item {
   property var favorites: []          // resolved [{ id, name, icon }] shown in the Quay
   property var favoriteIds: []        // every pinned id, including temporarily missing apps
   property bool opened: false
-  property bool edgeHover: false
   property bool windowHover: false
   property bool hovering: false
   property bool sliding: false
   readonly property bool quayShown: root.hovering
-  readonly property bool overlayActive: root.opened || root.pickerOpen || root.menuIndex >= 0 || root.detailIndex >= 0 || root.prefsOpen
-  readonly property bool panelOpen: root.pickerOpen || root.prefsOpen
+  readonly property bool overlayActive: root.opened || root.gridOpen || root.menuIndex >= 0 || root.detailIndex >= 0 || root.prefsOpen
+  readonly property bool panelOpen: root.gridOpen || root.prefsOpen
     || root.menuIndex >= 0 || root.detailIndex >= 0
   property var runningClasses: []
   // Merged display list (pinned + running-unpinned).
@@ -38,7 +37,7 @@ Item {
   readonly property int activeIconIndex: {
     if (root.hoveredIndex >= 0) return root.hoveredIndex
     if (!root.opened || root.dragActive) return -1
-    if (root.pickerOpen || root.prefsOpen
+    if (root.gridOpen || root.prefsOpen
         || root.menuIndex >= 0 || root.detailIndex >= 0) return -1
     return (root.keySel >= 0 && root.keySel < entriesModel.count) ? root.keySel : -1
   }
@@ -53,15 +52,11 @@ Item {
   // Keyboard navigation state.
   property int keySel: -1              // selected Quay entry; entriesModel.count = the add button
   property int menuSel: 0              // selected row inside an open sub-panel (context menu/prefs)
-  property int appSel: -1              // selected app row in the picker list (-1 = none)
-  property bool gearSel: false         // Tab focus on the picker's settings (gear) button
   property bool focusPrimed: false     // brief Exclusive prime before settling keyboard focus to OnDemand
-  property bool pickerOpen: false
-  property string searchText: ""
+  property bool gridOpen: false
   property int menuIndex: -1
   property int detailIndex: -1
   property var cyclePos: ({})
-  property string wheelTitle: ""
   property string screenPref: ""        // "" = auto (widest), else monitor name
   property int hideDelay: 1500          // ms the Quay/menus stay after hover ends
   property bool showName: false         // tooltip with the app name on hover/keyboard selection
@@ -71,6 +66,9 @@ Item {
   property int paddingX: 12             // horizontal card padding
   property int paddingY: 5              // vertical card padding
   property int iconSpacing: 6           // gap between icon slots
+  property int gridColumns: 6           // columns in the application grid
+  property int gridRows: 4              // visible rows in the application grid
+  property bool gridShowLabels: true    // application names under grid tiles
   // Fixed slot width: reserve room for the configured zoom and its neighbour
   // once, so hovering never changes the row or the card width.
   readonly property real iconSlotWidth: Model.slotWidth(root.iconSize, root.zoom, root.iconSpacing)
@@ -132,9 +130,6 @@ Item {
   }
   readonly property string settingsFile: home + "/.config/omarchy/quay-settings.json"
   property bool prefsOpen: false
-
-  readonly property var filteredApps: Model.sortedAppList(
-    DesktopEntries.applications.values || [], root.searchText)
 
   function entryFromModel(index) {
     if (index < 0 || index >= entriesModel.count) return null
@@ -198,7 +193,7 @@ Item {
   // currently missing. Missing pins move to the end instead of being lost.
   function applyFavoriteOrder(display) {
     var ids = []
-    var seen = ({})
+    var seen = Object.create(null)
     for (var i = 0; i < display.length; i++) {
       var id = Model.normalizeId(display[i].id)
       if (!id || seen[id]) continue
@@ -229,14 +224,18 @@ Item {
     Util.execArgv(["uwsm-app", "--"].concat(argv))
   }
 
-  function isRunning(entry) {
-    if (!entry || !entry.id) return false
-    var id = Model.normalizeId(entry.id).toLowerCase()
+  function isRunningId(id) {
+    if (!id) return false
+    var value = Model.normalizeId(id).toLowerCase()
     var classes = root.runningClasses
     for (var i = 0; i < classes.length; i++) {
-      if (classes[i] === id) return true
+      if (classes[i] === value) return true
     }
     return false
+  }
+
+  function isRunning(entry) {
+    return entry ? root.isRunningId(entry.id) : false
   }
 
   function entryForClass(cls) {
@@ -379,13 +378,11 @@ Item {
   function cycleWindow(entry, delta) {
     var wins = root.windowsFor(entry)
     if (wins.length <= 1) return
-    var key = Model.normalizeId(entry.id)
+    var key = "app:" + Model.normalizeId(entry.id)
     var pos = root.cyclePos[key] || 0
     pos = (pos + delta + wins.length) % wins.length
     root.cyclePos[key] = pos
     root.focusWindow(wins[pos].address)
-    root.wheelTitle = wins[pos].title
-    root.wheelFlash.restart()
   }
 
   function quitApp(entry) {
@@ -412,10 +409,13 @@ Item {
   function openMenu(index) {
     root.menuIndex = index
     root.detailIndex = -1
-    root.closePicker()
+    root.closeGrid()
     root.prefsOpen = false
     root.menuSel = 0
-    Qt.callLater(function() { root.refreshMenuHighlight() })
+    Qt.callLater(function() {
+      if (root.menuIndex >= 0) quayKeys.forceActiveFocus()
+      root.refreshMenuHighlight()
+    })
   }
 
   function closeMenu() {
@@ -426,9 +426,10 @@ Item {
     root.prefsOpen = true
     root.menuIndex = -1
     root.detailIndex = -1
-    root.closePicker()
+    root.closeGrid()
     root.menuSel = 0
     Qt.callLater(function() {
+      if (root.prefsOpen) quayKeys.forceActiveFocus()
       root.refreshMenuHighlight()
       if (prefsScroll.contentItem) prefsScroll.contentItem.contentY = 0
     })
@@ -447,7 +448,7 @@ Item {
   function refocusKeys() {
     if (!root.opened) return
     Qt.callLater(function() {
-      if (root.opened && !root.pickerOpen) quayKeys.forceActiveFocus()
+      if (root.opened && !root.gridOpen) quayKeys.forceActiveFocus()
     })
   }
 
@@ -483,6 +484,7 @@ Item {
     for (var i = 0; i < prefsScreens.count; i++) rows.push(prefsScreens.itemAt(i))
     rows.push(prefsHideDelay, prefsShowName, prefsShowOnHover)
     rows.push(prefsIconSize, prefsZoom, prefsGap, prefsPadX, prefsPadY)
+    rows.push(prefsGridColumns, prefsGridRows, prefsGridLabels)
     rows.push(prefsAnimMode, prefsSpeed)
     return rows
   }
@@ -526,8 +528,8 @@ Item {
     var kind = root.activeMenuKind()
     if (kind !== "") { root.menuTrigger(); return }
     if (root.keySel === entriesModel.count) {
-      root.openPicker()
-      Qt.callLater(function() { if (root.pickerOpen) searchField.forceActiveFocus() })
+      root.openGrid()
+      Qt.callLater(function() { if (root.gridOpen) appGrid.focusSearch() })
       return
     }
     var entry = root.entryFromModel(root.keySel)
@@ -542,7 +544,7 @@ Item {
   }
 
   function keyEscape() {
-    if (root.pickerOpen) { root.closePicker(); root.refocusKeys(); return }
+    if (root.gridOpen) { root.closeGrid(); root.refocusKeys(); return }
     if (root.detailIndex >= 0) { root.detailIndex = -1; return }
     if (root.menuIndex >= 0) { root.closeMenu(); return }
     if (root.prefsOpen) { root.closePrefs(); return }
@@ -581,24 +583,33 @@ Item {
     if (row && typeof row.trigger === "function") row.trigger()
   }
 
-  // Open the app picker (keyboard path calls this, then focuses the field).
-  function openPicker() {
+  // Open the application grid (the keyboard path then focuses its search).
+  function openGrid() {
     root.prefsOpen = false
     root.menuIndex = -1
     root.detailIndex = -1
-    root.appSel = -1
-    root.gearSel = false
-    root.pickerOpen = true
+    root.gridOpen = true
   }
 
   function setScreenPref(name) {
-    root.screenPref = name
+    var value = String(name || "")
+    if (value !== "") {
+      var screens = Quickshell.screens || []
+      var known = false
+      for (var i = 0; i < screens.length; i++) {
+        if (screens[i].name === value) { known = true; break }
+      }
+      if (!known) return
+    }
+    root.screenPref = value
     root.saveSettings()
     root.dismiss()
   }
 
   function setHideDelay(ms) {
-    root.hideDelay = ms
+    var next = parseInt(ms, 10)
+    if (!isFinite(next) || next < 250 || next > 30000) return
+    root.hideDelay = next
     root.saveSettings()
   }
 
@@ -648,23 +659,59 @@ Item {
   }
 
   function setAnimMode(mode) {
+    if (!root.isValidAnimMode(mode)) return
     root.animMode = mode
     root.saveSettings()
   }
 
   function setAnimSpeed(speed) {
+    if (["fast", "normal", "slow"].indexOf(speed) < 0) return
     root.animSpeed = speed
     root.saveSettings()
   }
 
+  function setGridColumns(value) {
+    var next = parseInt(value, 10)
+    if (!isFinite(next) || next < 3 || next > 12) return
+    root.gridColumns = next
+    root.saveSettings()
+  }
+
+  function setGridRows(value) {
+    var next = parseInt(value, 10)
+    if (!isFinite(next) || next < 1 || next > 10) return
+    root.gridRows = next
+    root.saveSettings()
+  }
+
+  function setGridShowLabels(on) {
+    root.gridShowLabels = on === true
+    root.saveSettings()
+  }
+
   function saveSettings() {
-    var json = JSON.stringify({ screen: root.screenPref, hideDelay: root.hideDelay, animMode: root.animMode, animSpeed: root.animSpeed, showName: root.showName, showOnHover: root.showOnHover, iconSize: root.iconSize, zoom: root.zoom, paddingX: root.paddingX, paddingY: root.paddingY, iconSpacing: root.iconSpacing })
+    var json = JSON.stringify({
+      screen: root.screenPref,
+      hideDelay: root.hideDelay,
+      animMode: root.animMode,
+      animSpeed: root.animSpeed,
+      showName: root.showName,
+      showOnHover: root.showOnHover,
+      iconSize: root.iconSize,
+      zoom: root.zoom,
+      paddingX: root.paddingX,
+      paddingY: root.paddingY,
+      iconSpacing: root.iconSpacing,
+      gridColumns: root.gridColumns,
+      gridRows: root.gridRows,
+      gridShowLabels: root.gridShowLabels
+    })
     settingsView.setText(json + "\n")
   }
 
   function dismiss() {
     root.opened = false
-    root.closePicker()
+    root.closeGrid()
     root.menuIndex = -1
     root.detailIndex = -1
     root.prefsOpen = false
@@ -692,16 +739,12 @@ Item {
   }
 
   onWindowHoverChanged: refreshHovering()
-  onEdgeHoverChanged: refreshHovering()
-  onPickerOpenChanged: refreshHovering()
+  onGridOpenChanged: refreshHovering()
   onMenuIndexChanged: refreshHovering()
   onDetailIndexChanged: refreshHovering()
   onPrefsOpenChanged: refreshHovering()
   onDragActiveChanged: refreshHovering()
-  onShowOnHoverChanged: {
-    if (!root.showOnHover) root.edgeHover = false
-    root.refreshHovering()
-  }
+  onShowOnHoverChanged: refreshHovering()
 
   // Keyboard focus follows the ALT + SPACE summon: prime briefly with Exclusive
   // (the Quay window is always mapped, so OnDemand alone never re-grabs
@@ -799,43 +842,36 @@ Item {
     root.applyFavoriteOrder(display)
   }
 
-  function closePicker() {
-    root.pickerOpen = false
-    root.searchText = ""
-    root.appSel = -1
-    root.gearSel = false
+  function closeGrid() {
+    root.gridOpen = false
   }
 
-  // Tab toggles picker focus between the search field and the gear button.
-  // Focus must be forced explicitly: blurring the field leaves activeFocus
-  // null and no key would reach the catcher anymore.
-  function togglePickerFocus() {
+  // Tab toggles focus between the grid's search field and its settings
+  // button. Focus must be forced explicitly: blurring the field leaves
+  // activeFocus null and no key would reach the catcher anymore.
+  function toggleGridFocus() {
     root.keepAlive()
-    root.gearSel = !root.gearSel
-    if (root.gearSel) quayKeys.forceActiveFocus()
-    else searchField.forceActiveFocus()
+    if (appGrid.gearSelected) {
+      appGrid.gearSelected = false
+      appGrid.focusSearch()
+    } else {
+      appGrid.gearSelected = true
+      quayKeys.forceActiveFocus()
+    }
   }
 
-  // Arrows in the picker move the highlighted app row.
-  function pickerNav(dy) {
-    root.keepAlive()
-    var n = root.filteredApps.length
-    if (n === 0) { root.appSel = -1; return }
-    if (root.appSel < 0) root.appSel = dy > 0 ? 0 : n - 1
-    else root.appSel = (root.appSel + dy + n) % n
-    appList.positionViewAtIndex(root.appSel, ListView.Contain)
+  // A printable key typed while the dock is open starts a grid search. The
+  // keyboard session is already active; typing is the fastest launcher path.
+  function isSearchCharacter(event) {
+    if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return false
+    var text = String(event.text || "")
+    if (text.length !== 1) return false
+    return text.charCodeAt(0) >= 0x21
   }
 
-  // Enter (or Space on the gear) in the picker: open the settings when the
-  // gear is selected, else launch the highlighted app (or the first match).
-  function pickerTrigger() {
-    root.keepAlive()
-    if (root.gearSel) { root.openPrefs(); return }
-    var apps = root.filteredApps
-    if (apps.length === 0) return
-    var idx = (root.appSel >= 0 && root.appSel < apps.length) ? root.appSel : 0
-    root.launchApp(apps[idx])
-    root.closePicker()
+  function beginGridSearch(text) {
+    root.openGrid()
+    appGrid.startSearch(text)
   }
 
   component PrefsHeader: Item {
@@ -892,7 +928,7 @@ Item {
       anchors.left: parent.left
       anchors.leftMargin: 8
       anchors.verticalCenter: parent.verticalCenter
-      width: 86
+      width: 96
       text: choice.label
       color: Commons.Color.popups.text
       font.family: Style.font.family
@@ -912,7 +948,7 @@ Item {
         delegate: Rectangle {
           required property var modelData
           width: Math.max(36, Math.min(58,
-            (choice.width - 104 - (choice.options.length - 1) * 4) / choice.options.length))
+            (choice.width - 114 - (choice.options.length - 1) * 4) / choice.options.length))
           height: 26
           radius: 7
           color: choice.current === modelData ? Qt.rgba(1, 1, 1, 0.16) : "transparent"
@@ -966,7 +1002,7 @@ Item {
 
       Text {
         textFormat: Text.PlainText
-        width: Math.max(44, choice.width - 104 - 56)
+        width: Math.max(44, choice.width - 114 - 56)
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         text: choice.formatValue(choice.current)
@@ -1051,6 +1087,11 @@ Item {
         if (py >= 0 && py <= 64) root.paddingY = py
         var gap = parseInt(obj.iconSpacing, 10)
         if (gap >= 0 && gap <= 48) root.iconSpacing = gap
+        var gc = parseInt(obj.gridColumns, 10)
+        if (gc >= 3 && gc <= 12) root.gridColumns = gc
+        var gr = parseInt(obj.gridRows, 10)
+        if (gr >= 1 && gr <= 10) root.gridRows = gr
+        root.gridShowLabels = obj.gridShowLabels !== false
       } catch (e) {
         root.screenPref = ""
       }
@@ -1075,12 +1116,6 @@ Item {
     triggeredOnStart: true
     repeat: true
     onTriggered: if (!clientsProc.running) clientsProc.running = true
-  }
-
-  Timer {
-    id: wheelFlash
-    interval: 1200
-    onTriggered: root.wheelTitle = ""
   }
 
   // Brief compositor-wide Exclusive phase so the always-mapped Quay window
@@ -1121,7 +1156,7 @@ Item {
   }
   function close() {
     root.opened = false
-    root.closePicker()
+    root.closeGrid()
     root.menuIndex = -1
     root.detailIndex = -1
     root.prefsOpen = false
@@ -1193,10 +1228,10 @@ Item {
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "quay"
     WlrLayershell.layer: WlrLayer.Overlay
-    // Exclusive while the picker's search field needs typing, or during the
+    // Exclusive while the grid's search field needs typing, or during the
     // brief focus prime after a ALT + SPACE summon; OnDemand otherwise while
     // opened (keeps keyboard focus without monopolizing pointer hit-testing).
-    WlrLayershell.keyboardFocus: root.pickerOpen ? WlrKeyboardFocus.Exclusive
+    WlrLayershell.keyboardFocus: root.gridOpen ? WlrKeyboardFocus.Exclusive
       : (root.opened ? (root.focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive)
       : WlrKeyboardFocus.None)
     anchors { bottom: true; left: true; right: true }
@@ -1207,7 +1242,7 @@ Item {
     // The old 16 px reserve put the panel top 2 px above the layer bounds,
     // clipping the rounded frame.
     implicitHeight: (root.hovering || root.sliding) ? (
-      root.pickerOpen ? picker.height + card.height + 20
+      root.gridOpen ? appGrid.height + card.height + 20
       : root.prefsOpen ? prefsMenu.height + card.height + 20
       : root.menuIndex >= 0 ? contextMenu.height + card.height + 20
       : root.detailIndex >= 0 ? detailPanel.height + card.height + 20
@@ -1229,10 +1264,10 @@ Item {
         height: root.hovering ? card.height : 0
       }
       Region {
-        x: picker.x
-        y: picker.y
-        width: picker.visible ? picker.width : 0
-        height: picker.visible ? picker.height : 0
+        x: appGrid.x
+        y: appGrid.y
+        width: appGrid.visible ? appGrid.width : 0
+        height: appGrid.visible ? appGrid.height : 0
       }
       Region {
         x: contextMenu.x
@@ -1257,7 +1292,7 @@ Item {
     // ---- Keyboard handler (active when the Quay has keyboard focus) ----
     // Wraps ALL window content: Keys.priority BeforeItem only reaches
     // handlers that are ancestors of the focused item, so the catcher must
-    // contain the picker's search field to keep seeing keys while typing
+    // contain the grid's search field to keep seeing keys while typing
     // (it then forwards everything except Escape to the field).
     Item {
       id: quayKeys
@@ -1266,32 +1301,48 @@ Item {
       Keys.priority: Keys.BeforeItem
 
       Keys.onPressed: function(event) {
-        if (root.pickerOpen) {
+        if (root.gridOpen) {
           if (event.isAutoRepeat) {
-            // Held arrows keep stepping the list; single-shot keys don't.
+            // Held arrows keep stepping the grid; single-shot keys don't.
             root.keepAlive()
-            if (event.key === Qt.Key_Up) { event.accepted = true; root.pickerNav(-1) }
-            else if (event.key === Qt.Key_Down) { event.accepted = true; root.pickerNav(1) }
+            var repeatX = event.key === Qt.Key_Left ? -1 : (event.key === Qt.Key_Right ? 1 : 0)
+            var repeatY = event.key === Qt.Key_Up ? -1 : (event.key === Qt.Key_Down ? 1 : 0)
+            if (repeatX !== 0 || repeatY !== 0) {
+              event.accepted = true
+              appGrid.moveSelection(repeatX, repeatY)
+            }
             return
           }
           root.keepAlive()
           if (event.key === Qt.Key_Escape) {
             event.accepted = true
-            root.closePicker()
+            root.closeGrid()
             root.refocusKeys()
           } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
             event.accepted = true
-            root.togglePickerFocus()
+            root.toggleGridFocus()
+          } else if (event.key === Qt.Key_Left) {
+            event.accepted = true
+            appGrid.moveSelection(-1, 0)
+          } else if (event.key === Qt.Key_Right) {
+            event.accepted = true
+            appGrid.moveSelection(1, 0)
           } else if (event.key === Qt.Key_Up) {
             event.accepted = true
-            root.pickerNav(-1)
+            appGrid.moveSelection(0, -1)
           } else if (event.key === Qt.Key_Down) {
             event.accepted = true
-            root.pickerNav(1)
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
-              || (event.key === Qt.Key_Space && root.gearSel)) {
+            appGrid.moveSelection(0, 1)
+          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             event.accepted = true
-            root.pickerTrigger()
+            if (appGrid.gearSelected) root.openPrefs()
+            else appGrid.activate()
+          } else if (event.key === Qt.Key_Space && appGrid.gearSelected) {
+            event.accepted = true
+            root.openPrefs()
+          } else if (appGrid.gearSelected && root.isSearchCharacter(event)) {
+            event.accepted = true
+            appGrid.appendSearch(event.text)
           }
           // Everything else falls through to the focused item (typing).
           return
@@ -1326,6 +1377,13 @@ Item {
           root.keyTrigger(true)
           return
         }
+        // Type-to-search: a letter or number while the dock is open summons
+        // the application grid with that character already in the filter.
+        if (!root.panelOpen && root.isSearchCharacter(event)) {
+          event.accepted = true
+          root.beginGridSearch(event.text)
+          return
+        }
       }
 
       // Background click-catcher: dismiss when clicking empty areas of the panel.
@@ -1341,204 +1399,30 @@ Item {
         onHoveredChanged: root.windowHover = hovered
       }
 
-    // ---- App picker (search + list), shown when pickerOpen ----
-    Rectangle {
-      id: picker
-      visible: root.pickerOpen && root.quayShown
+    // ---- Application grid, shown when gridOpen ----
+    AppGrid {
+      id: appGrid
+      visible: root.gridOpen && root.quayShown
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: card.top
       anchors.bottomMargin: 8
-      width: Math.min(380, parent.width - 32)
-      height: 320
-      radius: Style.cornerRadius
-      color: Commons.Color.popups.background
-      border.color: Commons.Color.popups.border
-      border.width: 1
-
-      Column {
-        anchors.fill: parent
-        anchors.margins: 10
-        spacing: 8
-
-        Row {
-          width: parent.width
-          spacing: 8
-
-          TextField {
-            id: searchField
-            width: parent.width - 42
-            focus: !root.gearSel
-            placeholderText: "Search apps…"
-            color: Commons.Color.popups.text
-            placeholderTextColor: Qt.darker(Commons.Color.popups.text, 1.5)
-            font.family: Style.font.family
-            font.pixelSize: Style.font.body
-            leftPadding: 10
-            rightPadding: 10
-            background: Rectangle {
-              radius: 8
-              color: Qt.rgba(1, 1, 1, 0.05)
-              border.color: Commons.Color.popups.border
-            }
-            onTextChanged: {
-              root.searchText = text
-              root.appSel = -1
-            }
-            // Clicking the field takes focus back from the gear button.
-            onActiveFocusChanged: if (activeFocus) root.gearSel = false
-          }
-
-          // Gear button: opens the settings menu (aligned with the list pin buttons).
-          Rectangle {
-            width: 28
-            height: 28
-            anchors.verticalCenter: parent.verticalCenter
-            radius: 14
-            color: (root.gearSel || gearHover.hovered) ? Qt.rgba(1, 1, 1, 0.10) : "transparent"
-            border.color: root.gearSel ? Commons.Color.accent : Commons.Color.popups.border
-            border.width: 1
-
-            Text {
-              textFormat: Text.PlainText
-              anchors.centerIn: parent
-              text: "⚙"
-              color: Commons.Color.popups.text
-              font.pixelSize: 15
-            }
-
-            HoverHandler { id: gearHover }
-
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.openPrefs()
-            }
-          }
-        }
-
-        ListView {
-          id: appList
-          width: parent.width
-          height: parent.height - searchField.height - 8
-          clip: true
-          boundsBehavior: Flickable.StopAtBounds
-          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-          model: root.filteredApps
-          spacing: 2
-
-            Connections {
-              target: root
-              function onAppSelChanged() {
-                if (root.appSel >= 0)
-                  appList.positionViewAtIndex(root.appSel, ListView.Contain)
-              }
-            }
-
-            delegate: Item {
-              required property var modelData
-              required property int index
-              width: ListView.view.width
-              height: 40
-
-              Rectangle {
-                anchors.fill: parent
-                radius: 8
-                color: index === root.appSel ? Qt.rgba(1, 1, 1, 0.14) : (appHover.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
-              }
-
-              Image {
-                anchors.left: parent.left
-                anchors.leftMargin: 8
-                anchors.verticalCenter: parent.verticalCenter
-                width: 24
-                height: 24
-                source: root.iconPathFor(modelData.icon)
-                smooth: true
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                anchors.left: parent.left
-                anchors.leftMargin: 42
-                anchors.right: parent.right
-                anchors.rightMargin: 42
-                anchors.verticalCenter: parent.verticalCenter
-                text: modelData.name
-                color: Commons.Color.popups.text
-                font.family: Style.font.family
-                font.pixelSize: Style.font.body
-                elide: Text.ElideRight
-              }
-
-              HoverHandler { id: appHover }
-
-              MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                  root.launchApp(modelData)
-                  root.closePicker()
-                }
-              }
-
-              // Pin/unpin button. The state is read from favoriteIds, so the
-              // glyph flips as soon as the list changes.
-              Rectangle {
-                id: pinButton
-                readonly property bool pinned: root.isPinned(modelData.id)
-                anchors.right: parent.right
-                anchors.rightMargin: 6
-                anchors.verticalCenter: parent.verticalCenter
-                width: 28
-                height: 28
-                radius: 14
-                color: pinHover.hovered ? Qt.rgba(1, 1, 1, 0.10) : "transparent"
-                border.color: pinButton.pinned ? Commons.Color.accent : Commons.Color.popups.border
-                border.width: 1
-
-                Text {
-                  textFormat: Text.PlainText
-                  anchors.centerIn: parent
-                  text: pinButton.pinned ? "✓" : "📌"
-                  color: pinButton.pinned ? Commons.Color.accent : Commons.Color.popups.text
-                  font.family: Style.font.family
-                  font.pixelSize: 14
-                }
-
-                ToolTip {
-                  visible: pinHover.hovered
-                  text: pinButton.pinned ? "Unpin" : "Pin to favorites"
-                }
-
-                HoverHandler { id: pinHover }
-
-                MouseArea {
-                  anchors.fill: parent
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: {
-                    if (pinButton.pinned) root.unpinApp(modelData.id)
-                    else root.pinApp(modelData.id)
-                  }
-                }
-              }
-            }
-          }
+      columns: root.gridColumns
+      rows: root.gridRows
+      showLabels: root.gridShowLabels
+      maxPanelWidth: Math.max(Style.space(260), parent.width - 2 * Style.space(16))
+      maxPanelHeight: root.panelMaxHeight
+      iconResolver: function(icon) { return root.iconPathFor(icon) }
+      isPinnedFn: function(id) { return root.isPinned(id) }
+      isRunningFn: function(id) { return root.isRunningId(id) }
+      onAppActivated: function(app) {
+        root.launchApp(app)
+        root.dismiss()
       }
-    }
-
-    // ---- Hotspot: thin always-present strip. It reveals Quay on hover when
-    // ---- Hover reveal is On; ALT + SPACE still opens it when Off ----
-    Rectangle {
-      id: hotspot
-      anchors.bottom: parent.bottom
-      anchors.left: parent.left
-      anchors.right: parent.right
-      height: 8
-      color: "transparent"
-      HoverHandler {
-        id: hotspotHover
-        onHoveredChanged: root.edgeHover = root.showOnHover && (hotspotHover.hovered || cardHover.hovered)
+      onPinToggled: function(app) {
+        if (root.isPinned(app.id)) root.unpinApp(app.id)
+        else root.pinApp(app.id)
       }
+      onSettingsRequested: root.openPrefs()
     }
 
     // ---- Quay card ----
@@ -1621,10 +1505,7 @@ Item {
 
       HoverHandler {
         id: cardHover
-        onHoveredChanged: {
-          root.edgeHover = root.showOnHover && (hotspotHover.hovered || cardHover.hovered)
-          if (!hovered) root.hoveredIndex = -1
-        }
+        onHoveredChanged: if (!hovered) root.hoveredIndex = -1
       }
 
       Item {
@@ -1828,7 +1709,7 @@ Item {
           z: 90
         }
 
-        // Menu button: opens the app picker (search + list)
+        // Menu button: opens the application grid
         Item {
           id: addButton
           x: root.slotXFor(entriesModel.count)
@@ -1889,8 +1770,8 @@ Item {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
             onClicked: {
-              if (root.pickerOpen) root.closePicker()
-              else root.openPicker()
+              if (root.gridOpen) root.closeGrid()
+              else root.openGrid()
             }
           }
 
@@ -2094,10 +1975,10 @@ Item {
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: card.top
       anchors.bottomMargin: 8
-      width: Math.min(840, parent.width - 32)
+      width: Math.min(900, parent.width - 32)
       // Three columns keep the panel compact; the cap still protects short
       // screens and the ScrollView resets to the top on open.
-      height: Math.min(prefsColumns.implicitHeight + 12, root.panelMaxHeight)
+      height: Math.min(prefsColumns.implicitHeight + 18, root.panelMaxHeight)
       radius: Style.cornerRadius
       color: Commons.Color.popups.background
       border.color: Commons.Color.popups.border
@@ -2188,7 +2069,7 @@ Item {
 
         PrefsChoice {
           id: prefsShowName
-          label: "App name"
+          label: "Name tooltip"
           options: ["On", "Off"]
           current: root.showName ? "On" : "Off"
           onPicked: root.setShowName(value === "On")
@@ -2275,6 +2156,55 @@ Item {
           current: root.paddingY
           formatValue: function(value) { return value + " px" }
           onPicked: root.setPaddingY(value)
+        }
+
+        Rectangle {
+          width: parent.width
+          height: 1
+          color: Commons.Color.popups.border
+        }
+
+        PrefsHeader {
+          title: "App grid"
+        }
+
+        PrefsChoice {
+          id: prefsGridColumns
+          label: "Columns"
+          options: [3, 4, 5, 6, 7, 8, 9, 10, 12]
+          current: root.gridColumns
+          formatValue: function(value) { return value + "" }
+          onPicked: root.setGridColumns(value)
+        }
+
+        PrefsChoice {
+          id: prefsGridRows
+          label: "Visible rows"
+          options: [1, 2, 3, 4, 5, 6, 8, 10]
+          current: root.gridRows
+          formatValue: function(value) { return value + "" }
+          onPicked: root.setGridRows(value)
+        }
+
+        PrefsChoice {
+          id: prefsGridLabels
+          label: "Tile labels"
+          options: ["On", "Off"]
+          current: root.gridShowLabels ? "On" : "Off"
+          onPicked: root.setGridShowLabels(value === "On")
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width
+          leftPadding: 10
+          rightPadding: 10
+          text: "Type while Quay is open to search."
+          color: Commons.Color.popups.text
+          opacity: 0.65
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
         }
 
         }
