@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.apachaiz.quay",
   "name": "Quay",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "ApachaiZ",
   "license": "MIT",
   "description": "Quay is a floating app shelf for Omarchy with pinned favorites, a searchable COSMIC-style app grid, configurable grid and dock geometry, drag reordering, and window controls",

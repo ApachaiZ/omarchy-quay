@@ -19,6 +19,7 @@ Rectangle {
   property bool showLabels: true
   property real maxPanelWidth: 800
   property real maxPanelHeight: 600
+  property int fadeDuration: 160
   property var iconResolver: function(icon) { return "" }
   property var isPinnedFn: function(id) { return false }
   property var isRunningFn: function(id) { return false }
@@ -81,7 +82,7 @@ Rectangle {
   clip: true
 
   Behavior on opacity {
-    NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+    NumberAnimation { duration: grid.fadeDuration; easing.type: Easing.OutCubic }
   }
 
   // Very light top wash: gives the panel depth without a second palette.
