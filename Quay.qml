@@ -81,10 +81,6 @@ Item {
   property string animMode: "slide"     // "slide" | "fade" | "scale" | "fadeSlide" | "bounce" | "zoom" | "stagger" | "blur" | "slideH"
   property string animSpeed: "normal"   // "fast" | "normal" | "slow"
   readonly property int animDuration: root.animSpeed === "fast" ? 120 : (root.animSpeed === "slow" ? 350 : 220)
-  // Sub-panels (app grid, context menu, details, preferences) always fade in
-  // on their own clock. They deliberately ignore animMode/animSpeed: the
-  // bar's slide/bounce/zoom must never drag the panel animation with it.
-  readonly property int panelFadeDuration: 160
 
   // Animation modes are components joined with "+" (e.g. "bounce+blur");
   // each component enables one visual aspect. Legacy "fadeSlide" is
@@ -1415,7 +1411,6 @@ Item {
       showLabels: root.gridShowLabels
       maxPanelWidth: Math.max(Style.space(260), parent.width - 2 * Style.space(16))
       maxPanelHeight: root.panelMaxHeight
-      fadeDuration: root.panelFadeDuration
       iconResolver: function(icon) { return root.iconPathFor(icon) }
       isPinnedFn: function(id) { return root.isPinned(id) }
       isRunningFn: function(id) { return root.isRunningId(id) }
@@ -1809,10 +1804,8 @@ Item {
       color: Commons.Color.popups.background
       border.color: Commons.Color.popups.border
       border.width: 1
-      opacity: visible ? 1 : 0
-      Behavior on opacity {
-        NumberAnimation { duration: root.panelFadeDuration; easing.type: Easing.OutCubic }
-      }
+      layer.enabled: visible
+      layer.effect: PanelBlurEffect { shown: contextMenu.visible }
 
       Column {
         id: menuColumn
@@ -1909,10 +1902,8 @@ Item {
       color: Commons.Color.popups.background
       border.color: Commons.Color.popups.border
       border.width: 1
-      opacity: visible ? 1 : 0
-      Behavior on opacity {
-        NumberAnimation { duration: root.panelFadeDuration; easing.type: Easing.OutCubic }
-      }
+      layer.enabled: visible
+      layer.effect: PanelBlurEffect { shown: detailPanel.visible }
 
       Column {
         anchors.fill: parent
@@ -1996,10 +1987,8 @@ Item {
       color: Commons.Color.popups.background
       border.color: Commons.Color.popups.border
       border.width: 1
-      opacity: visible ? 1 : 0
-      Behavior on opacity {
-        NumberAnimation { duration: root.panelFadeDuration; easing.type: Easing.OutCubic }
-      }
+      layer.enabled: visible
+      layer.effect: PanelBlurEffect { shown: prefsMenu.visible }
 
       ScrollView {
         id: prefsScroll

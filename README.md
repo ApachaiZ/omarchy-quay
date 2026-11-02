@@ -40,8 +40,8 @@ shell.
   cascade in), with speed control, plus every sensible combination
   (bounce pairs with fade/blur/stagger/scale/zoom, slide, scale, zoom,
   stagger and horizontal-slide pairs with fade/blur/stagger). The app grid
-  and the menus always fade in with their own fixed fade, independent of the
-  dock animation and speed.
+  and the menus always materialize with their own fixed blur animation,
+  independent of the dock animation and speed.
 - Full keyboard navigation while Quay is open (see below). On the dock, the
   active icon is shown by the same zoom used for hover; there is no selection
   frame. In the application grid, the keyboard selection has a visible focus
@@ -64,7 +64,7 @@ tag and Quay lists it again.
 | Hidden (parked) | `dropdown-hidden` | hidden from the shelf |
 | Revealed, released or restored | — | shown again |
 
-- Dropdown **≥ 0.7.9** adds the tag; Quay **≥ 1.0.1** filters it (Quay 1.2.1
+- Dropdown **≥ 0.7.9** adds the tag; Quay **≥ 1.0.1** filters it (Quay 1.2.2
   is current).
 - No configuration is needed on either side: install one, the other, or both.
 - Hyprland has no `skip_taskbar` flag. Any dock or launcher can use the same
@@ -169,6 +169,7 @@ Remove the `ALT + SPACE` line from `bindings.lua` and run `hyprctl reload`.
 manifest.json   # plugin registration (overlay, keepLoaded)
 Quay.qml        # overlay window, dock, menus, prefs, drag & drop
 AppGrid.qml     # searchable COSMIC-style application grid
+PanelBlurEffect.qml # independent blur materialize for sub-panels
 MenuRow.qml     # row used by the menus
 Model.js        # favorites, search ranking, Exec parsing, desktop entries
 tests/          # Node unit tests for Model.js
