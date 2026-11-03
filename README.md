@@ -15,11 +15,14 @@ shell.
   stay out of Quay's running list and window menu. See
   [Dropdown compatibility](#dropdown-compatibility).
 - Pinned favorites, persisted in `~/.config/omarchy/quay.json`.
-- **Application grid**: the `☰` button opens a COSMIC-style grid of installed
-  apps. Choose 3–12 columns, 1–10 visible rows, and whether tile labels are
-  shown. Search ranks name, generic-name, comment, keyword, desktop-id and
-  acronym matches. A letter or number typed while Quay is open opens the grid
-  with the filter already started.
+- **Application grid**: the 3×3 dot button at the right of the Quay opens a
+  COSMIC-style grid of installed apps. Choose 3–12 columns, 1–10 visible rows,
+  and whether tile labels are shown. Labels wrap to two lines before eliding,
+  and hover a tile to reveal its pin star. A dedicated close button and an
+  `Esc` hint make the grid dismissible without reaching for the keyboard.
+  Search ranks name, generic-name, comment, keyword, desktop-id and acronym
+  matches. A letter or number typed while Quay is open opens the grid with the
+  filter already started.
 - Icons magnify on hover (1.8× by default). Icon size (32–64 px in 4 px
   steps), hover zoom (1.3×/1.5×/1.8×), icon gap (0–24 px), and
   horizontal/vertical padding are configurable in the Quay preferences. The
@@ -30,18 +33,30 @@ shell.
   running unpinned app into the rail pins it at that position.
 - Click an icon to focus its window, switching to its workspace if needed;
   launch it when it is not running.
+- Right-click an icon for a menu anchored above that icon: the app header
+  shows its running/window status, then Focus/Launch, New window, pin/unpin, a
+  scrollable window list (workspace label and a per-window close button),
+  Details, and Quit. The window list scrolls when an app has many windows.
+- Right-click the empty Quay background (or press the grid's ⚙ button) for
+  preferences.
+- Pinned apps sit on the left; running apps that are not pinned follow after a
+  subtle separator, so the rail always tells you what is pinned.
 - Pin or unpin from the grid: hover a tile and click its star, or right-click
-  it. Pinned tiles keep a subtle star badge, and the grid stays open while you
-  curate Quay.
+  it. Pinned tiles keep a quiet outlined star badge, and the grid stays open
+  while you curate Quay.
 - Optional app-name tooltip on hover/keyboard selection (off by default,
   toggled in Quay preferences).
 - Configurable arrival/departure animations: slide, bounce, scale, zoom,
   horizontal slide, fade, blur (frosted materialize), stagger (icons
   cascade in), with speed control, plus every sensible combination
   (bounce pairs with fade/blur/stagger/scale/zoom, slide, scale, zoom,
-  stagger and horizontal-slide pairs with fade/blur/stagger). The app grid
-  and the menus always materialize with their own fixed blur animation,
-  independent of the dock animation and speed.
+  stagger and horizontal-slide pairs with fade/blur/stagger). This setting
+  applies to the **dock only**. The app grid, context menu, details and
+  preferences always use their own fixed fade, independent of the dock
+  animation and speed, so opening a panel never animates or moves the bar.
+  The Quay layer surface itself keeps a constant height: opening a panel
+  fades it in without resizing the surface, which is what used to make the
+  bar jump.
 - Full keyboard navigation while Quay is open (see below). On the dock, the
   active icon is shown by the same zoom used for hover; there is no selection
   frame. In the application grid, the keyboard selection has a visible focus
@@ -64,7 +79,7 @@ tag and Quay lists it again.
 | Hidden (parked) | `dropdown-hidden` | hidden from the shelf |
 | Revealed, released or restored | — | shown again |
 
-- Dropdown **≥ 0.7.9** adds the tag; Quay **≥ 1.0.1** filters it (Quay 1.2.2
+- Dropdown **≥ 0.7.9** adds the tag; Quay **≥ 1.0.1** filters it (Quay 1.3.0
   is current).
 - No configuration is needed on either side: install one, the other, or both.
 - Hyprland has no `skip_taskbar` flag. Any dock or launcher can use the same
@@ -75,15 +90,15 @@ tag and Quay lists it again.
 
 When Quay is summoned (ALT + SPACE), it grabs keyboard focus:
 
-- `←` / `→` (or `↑` / `↓`): move the selection across icons and the `☰`
+- `←` / `→` (or `↑` / `↓`): move the selection across icons and the 3×3
   grid button.
 - `Enter`: launch the selected app, or focus its window if it is running
   (same as a left click).
 - `Space`: cycle through the selected app's windows (same as the mouse
   wheel); launches it if it is not running. With the grid open, `Space`
   types a space in the search field.
-- `Escape` or `ALT + SPACE`: close. `Escape` closes panels progressively
-  (grid/detail → menu → Quay).
+- `Escape` or `ALT + SPACE`: close. `Escape` closes panels progressively:
+  details → the app's menu; the grid and preferences close back to the Quay.
 - With a menu open (context menu, preferences): `↑` / `↓` move the
   highlighted row, `Enter`/`Space` trigger it, `Escape` goes back.
 - Key presses keep Quay open for 10 s after the last press; the
@@ -133,22 +148,31 @@ hyprctl reload
 ```
 
 Pin or unpin from the application grid: hover a tile and click its star, or
-right-click the tile. Pinned tiles keep a star badge. Reorder the dock by
-dragging icons in Quay. The JSON file remains editable for scripted setups.
+right-click the tile. Pinned tiles keep an outlined star badge. Reorder the
+dock by dragging icons in Quay. The JSON file remains editable for scripted
+setups.
 
 ## Preferences
 
-Right-click the Quay background to open the preferences. The panel is split
-into three equal columns (Placement/Behavior, Appearance/App grid, Motion)
-with centered section titles and vertical separators. Arrow keys move between
-rows and left/right adjust the focused value; Enter cycles it. Icon size,
-hover zoom, icon gap, horizontal and vertical padding, animation, hide delay,
-**hover reveal**, screen, the name tooltip, and the application grid's
-columns, visible rows and tile labels are persisted in
-`~/.config/omarchy/quay-settings.json`. The Quay width is derived from the
-selected icon size, zoom, gap, and padding; it does not change while an icon
-is magnified. Grid columns and rows live under **App grid**; tile labels can be
-turned off for a pure icon grid.
+Right-click the Quay background to open preferences, or use the ⚙ button in
+the application grid. The panel is a single scrollable column with left-aligned
+sections — **Placement**, **Behavior**, **Dock**, **App grid**, **Bar motion** —
+and a footer that confirms changes save automatically. On/off settings use a
+switch; short lists use a segmented control; longer lists use a compact ‹ ›
+stepper. The whole row is clickable, so the mouse never has to find a tiny
+arrow, and the selected value is always shown even if it is not one of the
+preset steps.
+
+Arrow keys move between rows and left/right adjust the focused value; Enter
+cycles it or flips a switch. **Bar animation** and **Bar speed** only affect
+the dock's own appearance/disappearance; panels always fade. Icon size, hover
+zoom, icon gap, horizontal and vertical padding, hide delay, **hover reveal**,
+screen, the name tooltip, and the application grid's columns, visible rows and
+tile labels are persisted in `~/.config/omarchy/quay-settings.json`. The Quay
+width is derived
+from the selected icon size, zoom, gap, and padding; it does not change while
+an icon is magnified. Grid columns and rows live under **App grid**; tile
+labels can be turned off for a pure icon grid.
 
 **Hover reveal → Off** removes only the bottom-edge pointer reveal. The
 **ALT + SPACE** shortcut and `omarchy-shell shell toggle io.github.apachaiz.quay`
@@ -166,14 +190,18 @@ Remove the `ALT + SPACE` line from `bindings.lua` and run `hyprctl reload`.
 ## Files
 
 ```
-manifest.json   # plugin registration (overlay, keepLoaded)
-Quay.qml        # overlay window, dock, menus, prefs, drag & drop
-AppGrid.qml     # searchable COSMIC-style application grid
-PanelBlurEffect.qml # independent blur materialize for sub-panels
-MenuRow.qml     # row used by the menus
-Model.js        # favorites, search ranking, Exec parsing, desktop entries
-tests/          # Node unit tests for Model.js
-preview.png     # marketplace / README hero
+manifest.json        # plugin registration (overlay, keepLoaded)
+Quay.qml             # overlay window, dock, menus, prefs, drag & drop
+AppGrid.qml          # searchable COSMIC-style application grid
+MenuRow.qml          # actionable row used by menus and screen placement
+PrefsRow.qml         # segmented / stepper preferences row
+PrefsToggleRow.qml   # switch preferences row
+SectionHeader.qml    # small-caps section labels
+KeyHint.qml          # keycap + action footer hint
+SlimScrollBar.qml    # thin scrollbar shared by the panels
+Model.js             # favorites, search ranking, Exec parsing, desktop entries
+tests/               # Node unit tests for Model.js
+preview.png          # marketplace / README hero
 LICENSE
 ```
 
@@ -189,8 +217,9 @@ LICENSE
   seconds **only while Quay is visible or interactive**; the entry model is
   rebuilt only when an entry actually changes. Hidden Quay spawns no poll.
 - No network access and no elevated privileges.
-- The blur effect and its offscreen layer are only instantiated when the blur
-  animation is selected and Quay is visible.
+- The dock's blur effect and its offscreen layer are only instantiated when
+  the blur animation is selected and the dock is visible. Panels use a plain
+  opacity fade and no offscreen layer.
 
 ## Notes
 

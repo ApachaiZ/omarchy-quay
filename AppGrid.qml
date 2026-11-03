@@ -26,30 +26,48 @@ Rectangle {
   property string query: ""
   property int selectedIndex: -1
   property bool gearSelected: false
+  // Logical open state. The panel stays visible for the short opacity fade
+  // after `shown` drops, so its content does not collapse mid-fade.
+  property bool shown: false
+  property int fadeDuration: 150
 
   signal appActivated(var app)
   signal pinToggled(var app)
   signal settingsRequested()
+  signal closeRequested()
 
   // ---- Derived geometry --------------------------------------------------
   readonly property var apps: Model.sortedAppList(
     DesktopEntries.applications ? DesktopEntries.applications.values : [], query)
   readonly property int resultCount: grid.apps.length
   readonly property int safeRows: Math.max(1, grid.rows)
-  readonly property int padding: Style.space(14)
-  readonly property int headerHeight: Style.space(40)
-  readonly property int footerHeight: Style.space(22)
-  readonly property int sectionGap: Style.space(10)
-  readonly property int scrollbarGutter: Style.space(10)
-  readonly property int emptyHeight: Style.space(156)
-  readonly property real availableWidth: Math.max(Style.space(220), grid.maxPanelWidth - 2 * grid.padding - grid.scrollbarGutter)
+  readonly property int padding: Style.space(16)
+  readonly property int headerHeight: Math.max(Style.space(42),
+    Math.ceil(Style.font.body + Style.space(24)))
+  readonly property int footerHeight: Math.max(Style.space(26),
+    Math.ceil(Style.font.caption + Style.space(12)))
+  readonly property int sectionGap: Style.space(12)
+  readonly property int scrollbarGutter: Style.space(12)
+  readonly property int emptyHeight: Style.space(196)
+  readonly property real availableWidth: Math.max(Style.space(240),
+    grid.maxPanelWidth - 2 * grid.padding - grid.scrollbarGutter)
+
   // Honor the chosen column count, but never let a 12-column setting overflow
-  // a narrow screen: drop to the largest count that still fits a 56 px cell.
+  // a narrow screen: drop to the largest count that still fits a 58 px cell.
   readonly property int safeColumns: Math.max(1, Math.min(Math.max(1, grid.columns),
-    Math.floor(grid.availableWidth / Style.space(56))))
-  readonly property real cellWidth: Math.max(Style.space(56),
-    Math.min(Style.space(108), grid.availableWidth / grid.safeColumns))
-  readonly property real cellHeight: Math.round(grid.cellWidth * (grid.showLabels ? 1.16 : 0.92))
+    Math.floor(grid.availableWidth / Style.space(58))))
+  readonly property real cellWidth: Math.max(Style.space(58),
+    Math.min(Style.space(122), grid.availableWidth / grid.safeColumns))
+  // Two-line labels remove the aggressive truncation long application names
+  // used to suffer in a 6-column grid; very narrow cells fall back to one line.
+  readonly property int labelLines: grid.cellWidth >= Style.space(84) ? 2 : 1
+  readonly property real iconSize: Math.min(Style.space(60),
+    Math.round(grid.cellWidth * 0.5))
+  readonly property real labelHeight: grid.showLabels
+    ? Math.ceil(Style.font.bodySmall * 1.32) * grid.labelLines + Style.space(4)
+    : 0
+  readonly property real cellHeight: Math.round(
+    grid.iconSize + grid.labelHeight + 2 * Style.space(10))
   readonly property real maxGridHeight: Math.max(grid.cellHeight,
     grid.maxPanelHeight - grid.headerHeight - grid.footerHeight - 2 * grid.padding - 2 * grid.sectionGap)
   readonly property int visibleRows: grid.apps.length > 0
@@ -78,8 +96,12 @@ Rectangle {
   border.color: Commons.Color.popups.border
   border.width: 1
   clip: true
-  layer.enabled: visible
-  layer.effect: PanelBlurEffect { shown: grid.visible }
+  visible: grid.shown || grid.opacity > 0.001
+  opacity: grid.shown ? 1 : 0
+  enabled: grid.shown
+  Behavior on opacity {
+    NumberAnimation { duration: grid.fadeDuration; easing.type: Easing.OutCubic }
+  }
 
   // Very light top wash: gives the panel depth without a second palette.
   Rectangle {
@@ -92,21 +114,30 @@ Rectangle {
     }
   }
 
-  // ---- Search ------------------------------------------------------------
+  // Keep clicks on the panel's padding from falling through to the dismiss
+  // catcher behind the window. Tiles and buttons are declared above this.
+  MouseArea {
+    anchors.fill: parent
+    acceptedButtons: Qt.LeftButton | Qt.RightButton
+  }
+
+  // ---- Header: search, preferences, close --------------------------------
   Ui.TextField {
     id: searchField
     anchors.top: parent.top
     anchors.left: parent.left
-    anchors.right: gearButton.left
+    anchors.right: closeButton.left
     anchors.topMargin: grid.padding
     anchors.leftMargin: grid.padding
     anchors.rightMargin: grid.sectionGap
     height: grid.headerHeight
-    verticalPadding: Style.spacing.inputPaddingY + Style.space(2)
-    horizontalPadding: Style.space(34)
-    rightPadding: Style.space(34) + Style.spacing.controlPaddingX
+    verticalPadding: Style.space(10)
+    horizontalPadding: Style.space(36)
+    rightPadding: Style.space(36)
+    foreground: Commons.Color.popups.text
+    accent: Commons.Color.accent
     text: grid.query
-    placeholderText: "Search applications…"
+    placeholderText: "Search apps…"
     onTextChanged: if (grid.query !== text) grid.query = text
     onActiveFocusChanged: if (searchField.activeFocus) grid.gearSelected = false
   }
@@ -119,19 +150,19 @@ Rectangle {
     height: Style.space(16)
     source: grid.searchIconPath
     visible: grid.searchIconPath.length > 0
-    opacity: searchField.activeFocus ? 0.9 : 0.55
+    opacity: searchField.activeFocus ? 0.9 : 0.5
     sourceSize.width: width * 2
     sourceSize.height: height * 2
   }
 
   Text {
     anchors.left: searchField.left
-    anchors.leftMargin: Style.space(10)
+    anchors.leftMargin: Style.space(12)
     anchors.verticalCenter: searchField.verticalCenter
     visible: grid.searchIconPath === ""
     text: "⌕"
     color: Commons.Color.popups.text
-    opacity: 0.55
+    opacity: 0.5
     font.family: Style.font.family
     font.pixelSize: Style.font.body
   }
@@ -143,9 +174,26 @@ Rectangle {
     anchors.verticalCenter: searchField.verticalCenter
     iconText: "×"
     tooltipText: "Clear search"
-    size: Style.space(24)
+    foreground: Commons.Color.popups.text
+    hoverColor: Commons.Color.accent
+    size: Style.space(26)
     visible: searchField.text.length > 0
     onClicked: grid.clearSearch()
+  }
+
+  Ui.PanelActionButton {
+    id: closeButton
+    anchors.top: parent.top
+    anchors.right: gearButton.left
+    anchors.topMargin: grid.padding
+    anchors.rightMargin: Style.space(4)
+    iconText: "▾"
+    tooltipText: "Hide the app grid (Esc)"
+    foreground: Commons.Color.popups.text
+    hoverColor: Commons.Color.accent
+    fontSize: Style.font.iconLarge
+    size: grid.headerHeight
+    onClicked: grid.closeRequested()
   }
 
   Ui.PanelActionButton {
@@ -155,9 +203,11 @@ Rectangle {
     anchors.topMargin: grid.padding
     anchors.rightMargin: grid.padding
     iconText: "⚙"
-    tooltipText: "Settings"
+    tooltipText: "Preferences"
+    foreground: Commons.Color.popups.text
+    hoverColor: Commons.Color.accent
+    fontSize: Style.font.iconLarge
     size: grid.headerHeight
-    bordered: true
     hasCursor: grid.gearSelected
     onClicked: grid.settingsRequested()
   }
@@ -179,16 +229,7 @@ Rectangle {
     boundsBehavior: Flickable.StopAtBounds
     model: grid.apps
     cacheBuffer: grid.cellHeight * 2
-    ScrollBar.vertical: ScrollBar {
-      width: grid.scrollbarGutter
-      policy: ScrollBar.AsNeeded
-      background: Item { }
-      contentItem: Rectangle {
-        implicitWidth: Style.space(4)
-        radius: width / 2
-        color: Util.alpha(Commons.Color.popups.text, 0.3)
-      }
-    }
+    ScrollBar.vertical: SlimScrollBar { }
 
     delegate: Item {
       id: tile
@@ -205,29 +246,30 @@ Rectangle {
 
       Accessible.role: Accessible.Button
       Accessible.name: modelData.name
+      Accessible.onPressAction: grid.appActivated(modelData)
 
       Rectangle {
         anchors.fill: parent
         anchors.margins: Style.space(4)
-        radius: Style.cornerRadius
+        radius: Math.max(0, Math.min(Style.cornerRadius, Style.space(10)))
         color: tile.selected
-          ? Style.selectedFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
+          ? Style.selectedFillFor(Commons.Color.popups.text, Commons.Color.accent, Commons.Color.urgent)
           : (tile.hovered
-            ? Style.hoverFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
+            ? Style.hoverFillFor(Commons.Color.popups.text, Commons.Color.accent, Commons.Color.urgent)
             : "transparent")
         border.width: tile.selected ? 1 : 0
-        border.color: Util.alpha(Commons.Color.accent, 0.7)
+        border.color: Util.alpha(Commons.Color.accent, 0.85)
         Behavior on color { ColorAnimation { duration: 90 } }
       }
 
       Column {
         anchors.centerIn: parent
-        width: parent.width - Style.space(16)
+        width: parent.width - Style.space(12)
         spacing: Style.space(6)
 
         Item {
-          anchors.horizontalCenter: parent.horizontalCenter
-          width: Math.min(Style.space(52), Math.round(grid.cellWidth * 0.46))
+          x: Math.round((parent.width - width) / 2)
+          width: grid.iconSize
           height: width
 
           Image {
@@ -258,22 +300,26 @@ Rectangle {
         }
 
         Text {
+          id: labelText
           visible: grid.showLabels
           width: parent.width
           text: modelData.name
           textFormat: Text.PlainText
-          color: Commons.Color.popups.text
-          opacity: tile.selected || tile.hovered ? 1.0 : 0.82
+          color: tile.selected || tile.hovered
+            ? Commons.Color.accent
+            : Commons.Color.popups.text
+          opacity: tile.selected || tile.hovered ? 1.0 : 0.84
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
           horizontalAlignment: Text.AlignHCenter
+          wrapMode: Text.Wrap
+          maximumLineCount: grid.labelLines
           elide: Text.ElideRight
-          maximumLineCount: 1
         }
       }
 
-      // Pin toggle. Visible on hover or when pinned, so the grid stays quiet
-      // at rest while the action remains discoverable with the pointer.
+      // Pin toggle. A quiet outlined star marks a pinned app; the badge only
+      // gains the accent fill while the pointer is over it.
       Rectangle {
         id: pinBadge
         visible: tile.pinned || tile.hovered
@@ -281,31 +327,43 @@ Rectangle {
         anchors.right: parent.right
         anchors.topMargin: Style.space(6)
         anchors.rightMargin: Style.space(6)
-        width: Style.space(20)
+        width: Style.space(19)
         height: width
         radius: width / 2
-        color: tile.pinned
-          ? Util.alpha(Commons.Color.accent, 0.9)
-          : Util.alpha(Commons.Color.popups.background, 0.9)
-        border.width: tile.pinned ? 0 : 1
-        border.color: Commons.Color.popups.border
+        color: tile.pinned && pinMouse.containsMouse
+          ? Commons.Color.accent
+          : Util.alpha(Commons.Color.popups.background, 0.92)
+        border.width: 1
+        border.color: tile.pinned
+          ? Util.alpha(Commons.Color.accent, pinMouse.containsMouse ? 1 : 0.7)
+          : Util.alpha(Commons.Color.popups.text, pinMouse.containsMouse ? 0.5 : 0.24)
         z: 2
 
         Text {
           anchors.centerIn: parent
           text: tile.pinned ? "★" : "☆"
           textFormat: Text.PlainText
-          color: tile.pinned ? Commons.Color.popups.background : Commons.Color.popups.text
+          color: tile.pinned
+            ? (pinMouse.containsMouse ? Commons.Color.background : Commons.Color.accent)
+            : Commons.Color.popups.text
           opacity: tile.pinned ? 1 : 0.8
           font.family: Style.font.family
-          font.pixelSize: Style.font.bodySmall
+          font.pixelSize: Style.font.caption
           font.bold: true
         }
 
         MouseArea {
+          id: pinMouse
           anchors.fill: parent
+          hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
           onClicked: grid.pinToggled(modelData)
+
+          Ui.PanelToolTip {
+            visible: pinMouse.containsMouse
+            text: tile.pinned ? "Unpin from Quay" : "Pin to Quay"
+            delay: 500
+          }
         }
       }
 
@@ -322,24 +380,10 @@ Rectangle {
         }
       }
 
-      ToolTip {
-        visible: !grid.showLabels && tile.hovered
-        delay: 450
+      Ui.PanelToolTip {
+        visible: tile.hovered && (!grid.showLabels || labelText.truncated)
         text: modelData.name
-        contentItem: Text {
-          textFormat: Text.PlainText
-          text: modelData.name
-          font.family: Style.font.family
-          font.pixelSize: Style.font.body
-          color: Commons.Color.tooltip.text
-          wrapMode: Text.Wrap
-        }
-        background: Rectangle {
-          radius: Style.cornerRadius
-          color: Commons.Color.tooltip.background
-          border.color: Commons.Color.tooltip.border
-          border.width: 1
-        }
+        delay: 600
       }
     }
   }
@@ -355,40 +399,76 @@ Rectangle {
 
     Column {
       anchors.centerIn: parent
-      width: parent.width - 2 * grid.padding
-      spacing: Style.space(8)
+      width: Math.min(parent.width - 2 * grid.padding, Style.space(320))
+      spacing: Style.space(10)
 
-      Image {
+      Rectangle {
         x: Math.round((parent.width - width) / 2)
-        width: Style.space(28)
+        width: Style.space(54)
         height: width
-        source: grid.searchIconPath
-        visible: grid.searchIconPath.length > 0
-        opacity: 0.35
+        radius: width / 2
+        color: Util.alpha(Commons.Color.accent, 0.08)
+        border.width: 1
+        border.color: Util.alpha(Commons.Color.accent, 0.22)
+
+        Image {
+          anchors.centerIn: parent
+          width: Style.space(22)
+          height: width
+          source: grid.searchIconPath
+          visible: grid.searchIconPath.length > 0
+          opacity: 0.55
+        }
+
+        Text {
+          anchors.centerIn: parent
+          visible: grid.searchIconPath === ""
+          text: "⌕"
+          color: Commons.Color.popups.text
+          opacity: 0.5
+          font.family: Style.font.family
+          font.pixelSize: Style.font.title
+        }
       }
 
       Text {
         width: parent.width
-        text: grid.query.length > 0 ? "No matching applications" : "No applications found"
+        text: grid.query.length > 0
+          ? "No app matches “" + grid.query + "”"
+          : "No applications found"
         textFormat: Text.PlainText
         color: Commons.Color.popups.text
-        opacity: 0.82
+        opacity: 0.88
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
+        maximumLineCount: 2
+        elide: Text.ElideRight
       }
 
       Text {
         width: parent.width
-        visible: grid.query.length > 0
-        text: "Try a different name or keyword."
+        text: grid.query.length > 0
+          ? "Try a name, a keyword, or a shorter search."
+          : "Check that your desktop entries are installed."
         textFormat: Text.PlainText
         color: Commons.Color.popups.text
-        opacity: 0.45
+        opacity: 0.48
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
         horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.WordWrap
+      }
+
+      Ui.Button {
+        visible: grid.query.length > 0
+        x: Math.round((parent.width - width) / 2)
+        text: "Clear search"
+        bordered: true
+        foreground: Commons.Color.popups.text
+        accent: Commons.Color.accent
+        onClicked: grid.clearSearch()
       }
     }
   }
@@ -403,29 +483,38 @@ Rectangle {
     anchors.bottomMargin: grid.padding
     height: grid.footerHeight
 
+    Rectangle {
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      height: 1
+      color: Util.alpha(Commons.Color.popups.text, 0.12)
+    }
+
     Text {
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenterOffset: Style.space(3)
       text: grid.query.length > 0
         ? (grid.resultCount + (grid.resultCount === 1 ? " result" : " results"))
         : (grid.resultCount + (grid.resultCount === 1 ? " app" : " apps"))
       textFormat: Text.PlainText
       color: Commons.Color.popups.text
-      opacity: 0.48
+      opacity: 0.46
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
     }
 
-    Text {
+    Row {
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      visible: grid.width > Style.space(420)
-      text: "↵ Open    ⇥ Settings    Esc Close"
-      textFormat: Text.PlainText
-      color: Commons.Color.popups.text
-      opacity: 0.48
-      font.family: Style.font.family
-      font.pixelSize: Style.font.caption
+      anchors.verticalCenterOffset: Style.space(3)
+      visible: grid.width > Style.space(470)
+      spacing: Style.space(12)
+
+      KeyHint { keys: "↵"; label: "Open" }
+      KeyHint { keys: "Tab"; label: "Preferences" }
+      KeyHint { keys: "Esc"; label: "Close" }
     }
   }
 
@@ -477,10 +566,23 @@ Rectangle {
     if (count === 0) { grid.selectedIndex = -1; return }
     var index = grid.selectedIndex
     if (index < 0) index = (dx < 0 || dy < 0) ? count - 1 : 0
-    else if (dx !== 0) index = (index + dx + count) % count
-    else if (dy !== 0) {
-      var next = index + dy * grid.safeColumns
-      if (next >= 0 && next < count) index = next
+    else if (dx !== 0) {
+      // Horizontal movement reads like text: crossing a row edge lands on
+      // the first/last tile of the neighbouring row.
+      index = (index + dx + count) % count
+    } else if (dy !== 0) {
+      var columns = grid.safeColumns
+      var column = index % columns
+      var row = Math.floor(index / columns)
+      var lastRow = Math.floor((count - 1) / columns)
+      var nextRow = row + dy
+      if (nextRow >= 0 && nextRow <= lastRow) {
+        var target = nextRow * columns + column
+        // The final row can be partial: land on its last tile rather than
+        // refusing to move.
+        if (target >= count) target = count - 1
+        index = target
+      }
     }
     grid.selectedIndex = index
     gridView.positionViewAtIndex(index, GridView.Contain)
@@ -511,12 +613,18 @@ Rectangle {
       grid.selectedIndex = grid.apps.length > 0 ? grid.apps.length - 1 : -1
   }
 
-  onVisibleChanged: {
-    if (visible) {
+  onShownChanged: {
+    if (grid.shown) {
       grid.selectedIndex = grid.apps.length > 0 ? 0 : -1
       grid.scrollToTop()
       grid.focusSearch()
-    } else {
+    }
+  }
+
+  // Only clear the search once the fade finished. During the fade the panel
+  // keeps its content so the dismissal reads as a fade, not a collapse.
+  onVisibleChanged: {
+    if (!grid.visible) {
       grid.query = ""
       grid.gearSelected = false
       grid.selectedIndex = -1

@@ -7,6 +7,7 @@ import QtQuick.Effects
 import QtQml.Models
 import qs.Commons
 import qs.Commons as Commons
+import qs.Ui as Ui
 import "Model.js" as Model
 
 Item {
@@ -24,9 +25,10 @@ Item {
   property bool hovering: false
   property bool sliding: false
   readonly property bool quayShown: root.hovering
-  readonly property bool overlayActive: root.opened || root.gridOpen || root.menuIndex >= 0 || root.detailIndex >= 0 || root.prefsOpen
+  readonly property bool overlayActive: root.opened || root.gridOpen || root.prefsOpen
+    || root.menuOpen || root.detailOpen
   readonly property bool panelOpen: root.gridOpen || root.prefsOpen
-    || root.menuIndex >= 0 || root.detailIndex >= 0
+    || root.menuOpen || root.detailOpen
   property var runningClasses: []
   // Merged display list (pinned + running-unpinned).
   ListModel { id: entriesModel }
@@ -38,7 +40,7 @@ Item {
     if (root.hoveredIndex >= 0) return root.hoveredIndex
     if (!root.opened || root.dragActive) return -1
     if (root.gridOpen || root.prefsOpen
-        || root.menuIndex >= 0 || root.detailIndex >= 0) return -1
+        || root.menuOpen || root.detailOpen) return -1
     return (root.keySel >= 0 && root.keySel < entriesModel.count) ? root.keySel : -1
   }
   // Pointer reorder state: drag an icon along the rail and drop it into a
@@ -54,8 +56,20 @@ Item {
   property int menuSel: 0              // selected row inside an open sub-panel (context menu/prefs)
   property bool focusPrimed: false     // brief Exclusive prime before settling keyboard focus to OnDemand
   property bool gridOpen: false
+  // Logical open state. The indices below are kept while a panel fades out so
+  // its content does not collapse mid-fade; `menuOpen`/`detailOpen` are what
+  // the keyboard and input routing follow.
+  property bool menuOpen: false
+  property bool detailOpen: false
   property int menuIndex: -1
   property int detailIndex: -1
+  // The icon a context menu / details card is anchored to. -1 falls back to
+  // the centre of the Quay.
+  property int menuAnchorIndex: -1
+  property int detailAnchorIndex: -1
+  // Panels always use their own fixed fade, independent of the dock's
+  // configurable show/hide animation.
+  readonly property int panelFadeDuration: 150
   property var cyclePos: ({})
   property string screenPref: ""        // "" = auto (widest), else monitor name
   property int hideDelay: 1500          // ms the Quay/menus stay after hover ends
@@ -72,8 +86,14 @@ Item {
   // Fixed slot width: reserve room for the configured zoom and its neighbour
   // once, so hovering never changes the row or the card width.
   readonly property real iconSlotWidth: Model.slotWidth(root.iconSize, root.zoom, root.iconSpacing)
-  readonly property int cardHeight: Math.max(52 + 2 * root.paddingY,
-    Math.ceil(root.iconSize * Math.max(1, root.zoom)) + 2 * root.paddingY)
+  // Reserve a little room under the icons for the running-window dots so the
+  // largest zoom never touches the card border.
+  readonly property int cardHeight: Math.max(Style.space(56) + 2 * root.paddingY,
+    Math.ceil(root.iconSize * Math.max(1, root.zoom)) + 2 * root.paddingY + Style.space(6))
+  readonly property int prefsHeaderHeight: Math.max(Style.space(46),
+    Math.ceil(Style.font.title + Style.space(24)))
+  readonly property int prefsFooterHeight: Math.max(Style.space(28),
+    Math.ceil(Style.font.caption + Style.space(14)))
   // Keyboard navigation is slower than pointing: a key press (or the ALT + SPACE
   // summon) keeps the Quay alive for this long instead of hideDelay.
   readonly property int keyboardHideDelay: 10000
@@ -145,8 +165,32 @@ Item {
 
   readonly property var menuEntry: root.entryFromModel(root.menuIndex)
   readonly property var menuWindows: root.menuEntry ? root.windowsFor(root.menuEntry) : []
+  readonly property var menuDesktopEntry: root.menuEntry ? root.lookupDesktopEntry(root.menuEntry.id) : null
+  readonly property string menuStatusText: {
+    if (!root.menuEntry) return ""
+    var count = root.menuWindows.length
+    if (count === 0) return "Not running"
+    return count === 1 ? "Running · 1 window" : "Running · " + count + " windows"
+  }
   readonly property var detailEntry: root.entryFromModel(root.detailIndex)
   readonly property var detailDesktopEntry: root.detailEntry ? root.lookupDesktopEntry(root.detailEntry.id) : null
+  readonly property var detailWindows: root.detailEntry ? root.windowsFor(root.detailEntry) : []
+  readonly property string detailStatusText: {
+    if (!root.detailEntry) return ""
+    var count = root.detailWindows.length
+    if (count === 0) return "Not running"
+    return count === 1 ? "Running · 1 window" : "Running · " + count + " windows"
+  }
+  // Panels open above the icon that spawned them, clamped to the screen by
+  // each panel's x binding.
+  readonly property real menuAnchorX: root.menuAnchorIndex < 0
+    ? quayWindow.width / 2
+    : card.x + iconsRow.x + root.slotXFor(root.menuAnchorIndex) + root.iconSlotWidth / 2
+  readonly property real detailAnchorX: root.detailAnchorIndex < 0
+    ? quayWindow.width / 2
+    : card.x + iconsRow.x + root.slotXFor(root.detailAnchorIndex) + root.iconSlotWidth / 2
+  readonly property string quayVersion: root.manifest && root.manifest.version
+    ? String(root.manifest.version) : ""
 
 
   function iconPathFor(icon) {
@@ -311,10 +355,14 @@ Item {
         var icls = String(c.initialClass || "").toLowerCase()
         if (cls && out.indexOf(cls) < 0) out.push(cls)
         if (icls && out.indexOf(icls) < 0) out.push(icls)
+        var workspace = c.workspace
+          ? String(c.workspace.name || c.workspace.id || "")
+          : ""
         clist.push({
           address: String(c.address || ""),
           cls: cls,
-          title: String(c.title || "")
+          title: String(c.title || ""),
+          workspace: workspace
         })
       }
     } catch (e) {
@@ -407,25 +455,56 @@ Item {
   }
 
   function openMenu(index) {
+    if (!root.entryFromModel(index)) return
     root.menuIndex = index
-    root.detailIndex = -1
+    root.menuAnchorIndex = index
+    root.menuOpen = true
+    root.detailOpen = false
     root.closeGrid()
     root.prefsOpen = false
     root.menuSel = 0
     Qt.callLater(function() {
-      if (root.menuIndex >= 0) quayKeys.forceActiveFocus()
+      if (root.menuOpen) quayKeys.forceActiveFocus()
       root.refreshMenuHighlight()
+      if (menuScroll.contentItem) menuScroll.contentItem.contentY = 0
     })
   }
 
   function closeMenu() {
-    root.menuIndex = -1
+    // Keep menuIndex/menuAnchorIndex: the panel fades out with its content
+    // intact, and the next openMenu replaces them.
+    root.menuOpen = false
+  }
+
+  // Details replace the context menu instead of stacking on top of it. Closing
+  // them with Escape returns to the app's menu, the same progressive back
+  // behaviour as the grid/preferences panels.
+  function openDetails(index) {
+    if (!root.entryFromModel(index)) return
+    root.detailIndex = index
+    root.detailAnchorIndex = index
+    root.detailOpen = true
+    root.menuOpen = false
+    root.closeGrid()
+    root.prefsOpen = false
+    root.menuSel = 0
+    Qt.callLater(function() {
+      if (root.detailOpen) quayKeys.forceActiveFocus()
+      root.refreshMenuHighlight()
+      if (detailScroll.contentItem) detailScroll.contentItem.contentY = 0
+    })
+  }
+
+  function closeDetails(backToMenu) {
+    var index = root.detailIndex
+    root.detailOpen = false
+    if (backToMenu && index >= 0) root.openMenu(index)
   }
 
   function openPrefs() {
     root.prefsOpen = true
-    root.menuIndex = -1
-    root.detailIndex = -1
+    root.menuOpen = false
+    root.detailOpen = false
     root.closeGrid()
     root.menuSel = 0
     Qt.callLater(function() {
@@ -461,9 +540,9 @@ Item {
   }
 
   function activeMenuKind() {
-    if (root.menuIndex >= 0) return "menu"
+    if (root.menuOpen) return "menu"
     if (root.prefsOpen) return "prefs"
-    if (root.detailIndex >= 0) return "detail"
+    if (root.detailOpen) return "detail"
     return ""
   }
 
@@ -471,18 +550,19 @@ Item {
   // and `trigger()`; separators/headers are skipped.
   function menuRows() {
     var rows = [menuFocus]
+    if (menuNewWindow.visible) rows.push(menuNewWindow)
     if (menuPin.visible) rows.push(menuPin)
     else if (menuUnpin.visible) rows.push(menuUnpin)
     for (var i = 0; i < menuWinRepeater.count; i++) rows.push(menuWinRepeater.itemAt(i))
+    if (menuDetails.visible) rows.push(menuDetails)
     if (menuQuit.visible) rows.push(menuQuit)
-    rows.push(menuDetails)
     return rows
   }
 
   function prefsRows() {
     var rows = [prefsAuto]
     for (var i = 0; i < prefsScreens.count; i++) rows.push(prefsScreens.itemAt(i))
-    rows.push(prefsHideDelay, prefsShowName, prefsShowOnHover)
+    rows.push(prefsShowOnHover, prefsHideDelay, prefsShowName)
     rows.push(prefsIconSize, prefsZoom, prefsGap, prefsPadX, prefsPadY)
     rows.push(prefsGridColumns, prefsGridRows, prefsGridLabels)
     rows.push(prefsAnimMode, prefsSpeed)
@@ -545,8 +625,8 @@ Item {
 
   function keyEscape() {
     if (root.gridOpen) { root.closeGrid(); root.refocusKeys(); return }
-    if (root.detailIndex >= 0) { root.detailIndex = -1; return }
-    if (root.menuIndex >= 0) { root.closeMenu(); return }
+    if (root.detailOpen) { root.closeDetails(true); return }
+    if (root.menuOpen) { root.closeMenu(); return }
     if (root.prefsOpen) { root.closePrefs(); return }
     root.close()
   }
@@ -559,6 +639,7 @@ Item {
     root.menuSel = (root.menuSel + dy + rows.length) % rows.length
     root.refreshMenuHighlight()
     if (kind === "prefs") root.scrollPrefsToSel()
+    else if (kind === "menu") root.scrollMenuToSel()
   }
 
   // Keep the highlighted prefs row visible inside the scrollable menu.
@@ -567,6 +648,23 @@ Item {
     if (rows.length === 0 || root.menuSel < 0 || root.menuSel >= rows.length) return
     var row = rows[root.menuSel]
     var flick = prefsScroll.contentItem  // the ScrollView's internal Flickable
+    if (!flick) return
+    var target = row.y - flick.height / 2 + row.height / 2
+    flick.contentY = Math.max(0, Math.min(target, flick.contentHeight - flick.height))
+  }
+
+  // Scroll only when the highlighted row lives in the windows list; the
+  // fixed menu actions around it should not move the list.
+  function scrollMenuToSel() {
+    var rows = root.activeMenuRows()
+    if (root.menuSel < 0 || root.menuSel >= rows.length) return
+    var row = rows[root.menuSel]
+    var inside = false
+    for (var i = 0; i < menuWinRepeater.count; i++) {
+      if (menuWinRepeater.itemAt(i) === row) { inside = true; break }
+    }
+    if (!inside) return
+    var flick = menuScroll.contentItem
     if (!flick) return
     var target = row.y - flick.height / 2 + row.height / 2
     flick.contentY = Math.max(0, Math.min(target, flick.contentHeight - flick.height))
@@ -586,8 +684,8 @@ Item {
   // Open the application grid (the keyboard path then focuses its search).
   function openGrid() {
     root.prefsOpen = false
-    root.menuIndex = -1
-    root.detailIndex = -1
+    root.menuOpen = false
+    root.detailOpen = false
     root.gridOpen = true
   }
 
@@ -712,8 +810,8 @@ Item {
   function dismiss() {
     root.opened = false
     root.closeGrid()
-    root.menuIndex = -1
-    root.detailIndex = -1
+    root.menuOpen = false
+    root.detailOpen = false
     root.prefsOpen = false
   }
 
@@ -740,6 +838,8 @@ Item {
 
   onWindowHoverChanged: refreshHovering()
   onGridOpenChanged: refreshHovering()
+  onMenuOpenChanged: refreshHovering()
+  onDetailOpenChanged: refreshHovering()
   onMenuIndexChanged: refreshHovering()
   onDetailIndexChanged: refreshHovering()
   onPrefsOpenChanged: refreshHovering()
@@ -783,8 +883,8 @@ Item {
     root.dragX = x
     root.dragActive = true
     root.hoveredIndex = -1
-    root.menuIndex = -1
-    root.detailIndex = -1
+    root.menuOpen = false
+    root.detailOpen = false
     root.prefsOpen = false
     hideTimer.stop()
   }
@@ -874,162 +974,101 @@ Item {
     appGrid.startSearch(text)
   }
 
-  component PrefsHeader: Item {
-    property string title: ""
-    width: parent ? parent.width : 0
-    height: 28
+  // 3×3 dot glyph for the application-grid button. Drawn from theme colors
+  // instead of a text character so it stays crisp and consistent.
+  component AppGridGlyph: Item {
+    id: glyph
+    property color glyphColor: Commons.Color.popups.text
+    property real dotSize: Style.space(3)
+    property real dotGap: Style.space(5)
 
-    Text {
-      textFormat: Text.PlainText
-      anchors.centerIn: parent
-      text: title
-      color: Commons.Color.popups.text
-      font.family: Style.font.family
-      font.pixelSize: Style.font.body
-      font.bold: true
+    implicitWidth: 3 * glyph.dotSize + 2 * glyph.dotGap
+    implicitHeight: implicitWidth
+
+    Repeater {
+      model: 9
+      Rectangle {
+        required property int index
+        width: glyph.dotSize
+        height: width
+        radius: width / 2
+        x: (index % 3) * (glyph.dotSize + glyph.dotGap)
+        y: Math.floor(index / 3) * (glyph.dotSize + glyph.dotGap)
+        color: glyph.glyphColor
+      }
     }
   }
 
-  component PrefsChoice: Item {
-    id: choice
+  component PrefsInfo: Item {
     property string label: ""
-    property var options: []
-    property var current: null
-    property var formatValue: function(value) { return String(value) }
-    property bool highlighted: false
-    signal picked(var value)
-    width: parent ? parent.width : 220
-    height: 36
-
-    function next(delta) {
-      var count = choice.options.length
-      if (count === 0) return
-      var index = choice.options.indexOf(choice.current)
-      if (index < 0) index = delta > 0 ? -1 : 0
-      index = (index + delta + count) % count
-      choice.picked(choice.options[index])
-    }
-    function trigger() { next(1) }
-    function adjust(delta) { next(delta) }
-
-    Rectangle {
-      anchors.fill: parent
-      radius: 8
-      color: choice.highlighted ? Qt.rgba(1, 1, 1, 0.14) : "transparent"
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      onClicked: choice.trigger()
-    }
+    property string value: ""
+    width: parent ? parent.width : 0
+    height: Math.max(Style.space(30), Math.ceil(Style.font.body + Style.space(12)))
 
     Text {
       textFormat: Text.PlainText
       anchors.left: parent.left
-      anchors.leftMargin: 8
+      anchors.leftMargin: Style.space(10)
+      anchors.right: valueText.left
+      anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
-      width: 96
-      text: choice.label
+      text: label
       color: Commons.Color.popups.text
+      opacity: 0.52
       font.family: Style.font.family
-      font.pixelSize: Style.font.body
+      font.pixelSize: Style.font.bodySmall
       elide: Text.ElideRight
     }
 
-    Row {
-      visible: choice.options.length <= 3
+    Text {
+      id: valueText
+      textFormat: Text.PlainText
       anchors.right: parent.right
-      anchors.rightMargin: 6
+      anchors.rightMargin: Style.space(10)
       anchors.verticalCenter: parent.verticalCenter
-      spacing: 4
-
-      Repeater {
-        model: choice.options
-        delegate: Rectangle {
-          required property var modelData
-          width: Math.max(36, Math.min(58,
-            (choice.width - 114 - (choice.options.length - 1) * 4) / choice.options.length))
-          height: 26
-          radius: 7
-          color: choice.current === modelData ? Qt.rgba(1, 1, 1, 0.16) : "transparent"
-          border.color: choice.current === modelData ? Commons.Color.accent : Commons.Color.popups.border
-          border.width: 1
-
-          Text {
-            textFormat: Text.PlainText
-            anchors.centerIn: parent
-            text: choice.formatValue(modelData)
-            color: choice.current === modelData ? Commons.Color.accent : Qt.darker(Commons.Color.popups.text, 1.35)
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: choice.picked(modelData)
-          }
-        }
-      }
+      text: value
+      color: Commons.Color.popups.text
+      opacity: 0.88
+      font.family: Style.font.family
+      font.pixelSize: Style.font.bodySmall
     }
+  }
 
-    Row {
-      visible: choice.options.length > 3
-      anchors.right: parent.right
-      anchors.rightMargin: 6
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: 4
+  component DetailField: Item {
+    id: field
+    property string label: ""
+    property string value: ""
+    property bool wrapValue: false
+    width: parent ? parent.width : 0
+    height: fieldColumn.implicitHeight
 
-      Rectangle {
-        width: 24
-        height: 24
-        radius: 6
-        border.color: Commons.Color.popups.border
-        Text {
-          textFormat: Text.PlainText
-          anchors.centerIn: parent
-          text: "‹"
-          color: Commons.Color.accent
-          font.family: Style.font.family
-          font.pixelSize: 16
-        }
-        MouseArea {
-          anchors.fill: parent
-          cursorShape: Qt.PointingHandCursor
-          onClicked: choice.next(-1)
-        }
+    Column {
+      id: fieldColumn
+      width: parent.width
+      spacing: Style.space(2)
+
+      Text {
+        textFormat: Text.PlainText
+        width: parent.width
+        text: field.label.toUpperCase()
+        color: Commons.Color.popups.text
+        opacity: 0.48
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+        font.bold: true
+        font.letterSpacing: 0.8
       }
 
       Text {
         textFormat: Text.PlainText
-        width: Math.max(44, choice.width - 114 - 56)
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        text: choice.formatValue(choice.current)
+        width: parent.width
+        text: field.value
         color: Commons.Color.popups.text
+        opacity: 0.88
         font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
-      }
-
-      Rectangle {
-        width: 24
-        height: 24
-        radius: 6
-        border.color: Commons.Color.popups.border
-        Text {
-          textFormat: Text.PlainText
-          anchors.centerIn: parent
-          text: "›"
-          color: Commons.Color.accent
-          font.family: Style.font.family
-          font.pixelSize: 16
-        }
-        MouseArea {
-          anchors.fill: parent
-          cursorShape: Qt.PointingHandCursor
-          onClicked: choice.next(1)
-        }
+        font.pixelSize: Style.font.bodySmall
+        wrapMode: field.wrapValue ? Text.WrapAnywhere : Text.NoWrap
+        elide: field.wrapValue ? Text.ElideNone : Text.ElideRight
       }
     }
   }
@@ -1157,8 +1196,8 @@ Item {
   function close() {
     root.opened = false
     root.closeGrid()
-    root.menuIndex = -1
-    root.detailIndex = -1
+    root.menuOpen = false
+    root.detailOpen = false
     root.prefsOpen = false
     root.hovering = false
     root.sliding = true
@@ -1235,21 +1274,16 @@ Item {
       : (root.opened ? (root.focusPrimed ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.Exclusive)
       : WlrKeyboardFocus.None)
     anchors { bottom: true; left: true; right: true }
-    // Window height follows the tallest visible panel plus the card, so
-    // menu tops never get clipped by the window bounds. The context menu
-    // grows with its window rows (capped), the others have fixed sizes.
-    // 10 px card bottom margin + 8 px panel gap + 2 px frame safety.
-    // The old 16 px reserve put the panel top 2 px above the layer bounds,
-    // clipping the rounded frame.
-    implicitHeight: (root.hovering || root.sliding) ? (
-      root.gridOpen ? appGrid.height + card.height + 20
-      : root.prefsOpen ? prefsMenu.height + card.height + 20
-      : root.menuIndex >= 0 ? contextMenu.height + card.height + 20
-      : root.detailIndex >= 0 ? detailPanel.height + card.height + 20
-      : 112) : 8
+    // A constant full-height surface is intentional. If this height followed
+    // the open panel, every menu would resize the layer surface and make the
+    // dock look like it jumps while the panel opens. The mask below keeps the
+    // transparent area click-through.
+    implicitHeight: root.screenHeight
 
     // Only the visible card, panels, and the reveal strip accept input. The
-    // rest of this full-width layer stays click-through to the windows below.
+    // rest of this full-sized layer stays click-through to the windows below.
+    // Panels use their logical `shown` state (not `visible`) so the input
+    // region ends as soon as a panel starts fading out.
     mask: Region {
       Region {
         x: 0
@@ -1266,26 +1300,26 @@ Item {
       Region {
         x: appGrid.x
         y: appGrid.y
-        width: appGrid.visible ? appGrid.width : 0
-        height: appGrid.visible ? appGrid.height : 0
+        width: appGrid.shown ? appGrid.width : 0
+        height: appGrid.shown ? appGrid.height : 0
       }
       Region {
         x: contextMenu.x
         y: contextMenu.y
-        width: contextMenu.visible ? contextMenu.width : 0
-        height: contextMenu.visible ? contextMenu.height : 0
+        width: contextMenu.shown ? contextMenu.width : 0
+        height: contextMenu.shown ? contextMenu.height : 0
       }
       Region {
         x: detailPanel.x
         y: detailPanel.y
-        width: detailPanel.visible ? detailPanel.width : 0
-        height: detailPanel.visible ? detailPanel.height : 0
+        width: detailPanel.shown ? detailPanel.width : 0
+        height: detailPanel.shown ? detailPanel.height : 0
       }
       Region {
         x: prefsMenu.x
         y: prefsMenu.y
-        width: prefsMenu.visible ? prefsMenu.width : 0
-        height: prefsMenu.visible ? prefsMenu.height : 0
+        width: prefsMenu.shown ? prefsMenu.width : 0
+        height: prefsMenu.shown ? prefsMenu.height : 0
       }
     }
 
@@ -1402,7 +1436,8 @@ Item {
     // ---- Application grid, shown when gridOpen ----
     AppGrid {
       id: appGrid
-      visible: root.gridOpen && root.quayShown
+      shown: root.gridOpen && root.quayShown
+      fadeDuration: root.panelFadeDuration
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: card.top
       anchors.bottomMargin: 8
@@ -1423,6 +1458,10 @@ Item {
         else root.pinApp(app.id)
       }
       onSettingsRequested: root.openPrefs()
+      onCloseRequested: {
+        root.closeGrid()
+        root.refocusKeys()
+      }
     }
 
     // ---- Quay card ----
@@ -1508,16 +1547,27 @@ Item {
         onHoveredChanged: if (!hovered) root.hoveredIndex = -1
       }
 
+      // Empty card areas: right-click opens preferences (as documented), and
+      // a left click is consumed instead of dismissing the Quay when the user
+      // misses an icon.
+      MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onClicked: function(mouse) {
+          if (mouse.button === Qt.RightButton) root.openPrefs()
+        }
+      }
+
       Item {
         id: iconsRow
         anchors.centerIn: parent
-        width: root.slotXFor(entriesModel.count) + 44
-        height: 52
+        width: root.slotXFor(entriesModel.count) + 48
+        height: root.cardHeight
 
         ListView {
           id: iconList
           width: root.slotXFor(entriesModel.count)
-          height: 52
+          height: root.cardHeight
           orientation: ListView.Horizontal
           interactive: false
           model: entriesModel
@@ -1532,7 +1582,15 @@ Item {
             required property int index
 
             width: root.iconSlotWidth
-            height: 52
+            height: root.cardHeight
+
+            Accessible.role: Accessible.Button
+            Accessible.name: name
+            Accessible.onPressAction: {
+              var entry = root.entryFromModel(index)
+              if (entry && entry.running) root.focusApp(entry)
+              else root.launchApp(entry)
+            }
 
             // Stagger component: icons cascade in one by one. A per-index
             // Timer flips staggerIn after its delay; the Behavior only fades
@@ -1570,7 +1628,10 @@ Item {
 
             HoverHandler {
               id: iconHover
-              onHoveredChanged: if (hovered && !root.dragActive) root.hoveredIndex = index
+              onHoveredChanged: {
+                if (hovered && !root.dragActive) root.hoveredIndex = index
+                else if (!hovered && root.hoveredIndex === index) root.hoveredIndex = -1
+              }
             }
 
             Image {
@@ -1579,7 +1640,10 @@ Item {
               height: root.iconSize
               source: root.iconPathFor(icon)
               smooth: true
+              mipmap: true
               antialiasing: true
+              sourceSize.width: width * 2
+              sourceSize.height: height * 2
               scale: Model.iconScale(index, root.activeIconIndex, root.zoom)
               transformOrigin: Item.Center
 
@@ -1598,8 +1662,9 @@ Item {
                 NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
               }
 
+              // Cap the indicators: a busy app should not stretch its slot.
               Repeater {
-                model: winCount
+                model: Math.min(winCount, 4)
                 delegate: Rectangle {
                   width: 5
                   height: 5
@@ -1661,23 +1726,26 @@ Item {
               }
             }
 
-            ToolTip {
-              id: nameTooltip
-              visible: !root.dragActive && root.showName && (iconHover.hovered || (root.keySel === index && root.opened))
+            Ui.PanelToolTip {
+              visible: !root.dragActive && root.showName
+                && (iconHover.hovered || (root.keySel === index && root.opened))
               text: name
               delay: iconHover.hovered ? 400 : 0
-
-              // The application name comes from a desktop entry, so it must
-              // not be parsed as rich text by the default AutoText tooltip.
-              contentItem: Text {
-                textFormat: Text.PlainText
-                text: nameTooltip.text
-                font: nameTooltip.font
-                wrapMode: Text.Wrap
-                color: nameTooltip.palette.toolTipText
-              }
             }
           }
+        }
+
+        // Separator between the pinned favorites and the running apps that
+        // are not pinned, so the two groups read as one rail without looking
+        // like a single undifferentiated list.
+        Rectangle {
+          visible: root.favorites.length > 0 && entriesModel.count > root.favorites.length
+          x: root.slotXFor(root.favorites.length) - width / 2
+          anchors.verticalCenter: parent.verticalCenter
+          width: 1
+          height: Math.max(Style.space(18), Math.round(root.iconSize * 0.55))
+          color: Util.alpha(Commons.Color.popups.text, 0.18)
+          z: 70
         }
 
         // Insertion marker: the slot boundary where the icon will land.
@@ -1685,9 +1753,9 @@ Item {
           id: dropMarker
           visible: root.dragActive && root.dragSlot >= 0
           x: root.dragSlot * root.iconSlotWidth - 1
-          y: 4
+          y: Math.max(4, (root.cardHeight - height) / 2)
           width: 2
-          height: Math.max(44, root.iconSize * 0.9)
+          height: Math.max(Style.space(44), root.iconSize * 1.1)
           radius: 1
           color: Commons.Color.accent
           z: 80
@@ -1704,17 +1772,31 @@ Item {
           height: root.iconSize
           source: root.dragEntry ? root.iconPathFor(root.dragEntry.icon) : ""
           smooth: true
+          mipmap: true
+          sourceSize.width: width * 2
+          sourceSize.height: height * 2
           opacity: 0.92
           scale: 1.06
           z: 90
         }
 
-        // Menu button: opens the application grid
+        // Application-grid button: a 3×3 dot glyph, quiet at rest and
+        // accented while the grid is open.
         Item {
           id: addButton
           x: root.slotXFor(entriesModel.count)
-          width: 44
-          height: 52
+          width: 48
+          height: root.cardHeight
+
+          readonly property real buttonSize: Math.min(Style.space(48),
+            Math.max(Style.space(30), Math.round(root.iconSize * 0.75)))
+
+          Accessible.role: Accessible.Button
+          Accessible.name: root.gridOpen ? "Hide the app grid" : "All applications"
+          Accessible.onPressAction: {
+            if (root.gridOpen) root.closeGrid()
+            else root.openGrid()
+          }
 
           // Last element of the stagger cascade (same timer technique as
           // the icon delegates).
@@ -1747,24 +1829,33 @@ Item {
 
           Rectangle {
             anchors.centerIn: parent
-            width: 34
-            height: 34
-            radius: 17
-            color: addHover.hovered ? Qt.rgba(1, 1, 1, 0.10) : "transparent"
-            border.color: Commons.Color.popups.border
+            width: addButton.buttonSize
+            height: width
+            radius: width / 2
+            color: root.gridOpen
+              ? Style.selectedFillFor(Commons.Color.popups.text, Commons.Color.accent, Commons.Color.urgent)
+              : (addHover.hovered
+                ? Style.hoverFillFor(Commons.Color.popups.text, Commons.Color.accent, Commons.Color.urgent)
+                : "transparent")
             border.width: 1
+            border.color: root.gridOpen
+              ? Commons.Color.accent
+              : Util.alpha(Commons.Color.popups.text, addHover.hovered ? 0.5 : 0.26)
+            Behavior on color { ColorAnimation { duration: 100 } }
           }
 
-          Text {
-            textFormat: Text.PlainText
+          AppGridGlyph {
             anchors.centerIn: parent
-            text: "☰"
-            color: Commons.Color.popups.text
-            font.family: Style.font.family
-            font.pixelSize: Style.font.title
+            dotSize: Math.max(Style.space(3), Math.round(addButton.buttonSize * 0.09))
+            dotGap: Math.max(Style.space(4), Math.round(addButton.buttonSize * 0.16))
+            glyphColor: root.gridOpen ? Commons.Color.accent : Commons.Color.popups.text
+            opacity: addHover.hovered || root.gridOpen ? 1 : 0.82
           }
 
-          HoverHandler { id: addHover }
+          HoverHandler {
+            id: addHover
+            onHoveredChanged: if (hovered) root.hoveredIndex = -1
+          }
 
           MouseArea {
             anchors.fill: parent
@@ -1775,13 +1866,19 @@ Item {
             }
           }
 
+          Ui.PanelToolTip {
+            visible: addHover.hovered
+            text: root.gridOpen ? "Hide the app grid" : "All applications"
+            delay: 450
+          }
+
           // Keyboard selection ring when the add button is selected.
           Rectangle {
-            visible: root.keySel === entriesModel.count && root.opened
+            visible: root.keySel === entriesModel.count && root.opened && !root.gridOpen
             anchors.centerIn: parent
-            width: 40
-            height: 40
-            radius: 20
+            width: addButton.buttonSize + Style.space(8)
+            height: width
+            radius: width / 2
             color: "transparent"
             border.color: Commons.Color.accent
             border.width: 2
@@ -1793,30 +1890,97 @@ Item {
     // ---- Context menu (right-click on an icon) ----
     Rectangle {
       id: contextMenu
-      visible: root.menuIndex >= 0 && root.menuEntry !== null
-      anchors.horizontalCenter: parent.horizontalCenter
+      property bool shown: root.menuOpen && root.menuEntry !== null
+      visible: shown || opacity > 0.001
+      opacity: shown ? 1 : 0
+      enabled: shown
       anchors.bottom: card.top
       anchors.bottomMargin: 8
-      width: Math.min(280, parent.width - 32)
-      // Grows with the window list, capped so it can't overflow the screen.
-      height: Math.min(menuColumn.implicitHeight + 12, 620, root.panelMaxHeight)
+      x: Math.round(Math.max(Style.space(16),
+        Math.min(root.menuAnchorX - width / 2, parent.width - width - Style.space(16))))
+      width: Math.min(Style.space(300), parent.width - 32)
+      height: Math.min(menuColumn.implicitHeight + 2 * contextMenu.menuMargin, root.panelMaxHeight)
       radius: Style.cornerRadius
       color: Commons.Color.popups.background
       border.color: Commons.Color.popups.border
       border.width: 1
-      layer.enabled: visible
-      layer.effect: PanelBlurEffect { shown: contextMenu.visible }
+      clip: true
+      Behavior on opacity {
+        NumberAnimation { duration: root.panelFadeDuration; easing.type: Easing.OutCubic }
+      }
+
+      readonly property int menuMargin: Style.space(6)
+
+      // Consume clicks on the menu's padding; only the scrim outside closes.
+      MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+      }
 
       Column {
         id: menuColumn
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.margins: 6
-        spacing: 2
+        anchors.margins: contextMenu.menuMargin
+        spacing: Style.space(1)
 
-        PrefsHeader {
-          title: root.menuEntry ? root.menuEntry.name : ""
+        // Header: app icon, name, and a live running/window status.
+        Item {
+          width: parent.width
+          height: Math.max(Style.space(50),
+            Math.ceil(Style.font.title + Style.font.caption + Style.space(18)))
+
+          Image {
+            id: menuIcon
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(6)
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(30)
+            height: width
+            source: root.menuEntry ? root.iconPathFor(root.menuEntry.icon) : ""
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            sourceSize.width: width * 2
+            sourceSize.height: height * 2
+          }
+
+          Column {
+            anchors.left: menuIcon.right
+            anchors.leftMargin: Style.space(10)
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+
+            Text {
+              width: parent.width
+              text: root.menuEntry ? root.menuEntry.name : ""
+              textFormat: Text.PlainText
+              color: Commons.Color.popups.text
+              font.family: Style.font.family
+              font.pixelSize: Style.font.title
+              font.bold: true
+              elide: Text.ElideRight
+            }
+
+            Text {
+              width: parent.width
+              text: root.menuStatusText
+              textFormat: Text.PlainText
+              color: Commons.Color.popups.text
+              opacity: 0.55
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
+          }
+        }
+
+        Rectangle {
+          width: parent.width
+          height: 1
+          color: Util.alpha(Commons.Color.popups.text, 0.12)
         }
 
         MenuRow {
@@ -1827,10 +1991,22 @@ Item {
         }
 
         MenuRow {
+          id: menuNewWindow
+          icon: "↗"
+          label: "New window"
+          visible: root.menuDesktopEntry
+            && String(root.menuDesktopEntry.execString || "") !== ""
+          onTriggered: {
+            root.launchNewWindow(root.menuEntry)
+            root.dismiss()
+          }
+        }
+
+        MenuRow {
           id: menuPin
-          icon: "📌"
-          visible: root.menuEntry ? !root.menuEntry.pinned : false
-          label: "Pin to favorites"
+          icon: "★"
+          visible: root.menuEntry ? !root.isPinned(root.menuEntry.id) : false
+          label: "Pin to Quay"
           onTriggered: {
             root.pinApp(root.menuEntry.id)
             root.closeMenu()
@@ -1839,9 +2015,9 @@ Item {
 
         MenuRow {
           id: menuUnpin
-          icon: "⊘"
-          visible: root.menuEntry ? root.menuEntry.pinned : false
-          label: "Unpin"
+          icon: "☆"
+          visible: root.menuEntry ? root.isPinned(root.menuEntry.id) : false
+          label: "Unpin from Quay"
           onTriggered: {
             root.unpinApp(root.menuEntry.id)
             root.closeMenu()
@@ -1852,23 +2028,62 @@ Item {
           visible: root.menuWindows.length > 0
           width: parent.width
           height: 1
-          color: Commons.Color.popups.border
+          color: Util.alpha(Commons.Color.popups.text, 0.12)
         }
 
-        PrefsHeader {
+        SectionHeader {
           visible: root.menuWindows.length > 0
           title: "Windows"
         }
 
-        Repeater {
-          id: menuWinRepeater
-          model: root.menuWindows
-          delegate: MenuRow {
-            required property var modelData
-            icon: "▤"
-            label: modelData.title
-            onTriggered: root.focusWindow(modelData.address)
+        ScrollView {
+          id: menuScroll
+          visible: root.menuWindows.length > 0
+          width: parent.width
+          height: Math.min(menuWinColumn.implicitHeight, Style.space(224))
+          clip: true
+          ScrollBar.vertical: SlimScrollBar { }
+          ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+          Column {
+            id: menuWinColumn
+            width: menuScroll.width - Style.space(10)
+            spacing: Style.space(1)
+
+            Repeater {
+              id: menuWinRepeater
+              model: root.menuWindows
+
+              delegate: MenuRow {
+                required property var modelData
+                icon: "▤"
+                label: modelData.title
+                detail: modelData.workspace !== ""
+                  ? "Workspace " + modelData.workspace : ""
+                trailingIcon: "×"
+                trailingTooltip: "Close window"
+                onTriggered: {
+                  root.focusWindow(modelData.address)
+                  root.closeMenu()
+                }
+                onTrailingTriggered: root.closeWindow(modelData.address)
+              }
+            }
           }
+        }
+
+        Rectangle {
+          visible: root.menuWindows.length > 0
+          width: parent.width
+          height: 1
+          color: Util.alpha(Commons.Color.popups.text, 0.12)
+        }
+
+        MenuRow {
+          id: menuDetails
+          icon: "ℹ"
+          label: "Details"
+          onTriggered: root.openDetails(root.menuIndex)
         }
 
         MenuRow {
@@ -1879,375 +2094,498 @@ Item {
           label: "Quit"
           onTriggered: root.quitApp(root.menuEntry)
         }
-
-        MenuRow {
-          id: menuDetails
-          icon: "ℹ"
-          label: "Details"
-          onTriggered: { root.detailIndex = root.menuIndex }
-        }
       }
     }
 
     // ---- Details panel ----
     Rectangle {
       id: detailPanel
-      visible: root.detailIndex >= 0 && root.detailEntry !== null
-      anchors.horizontalCenter: parent.horizontalCenter
+      property bool shown: root.detailOpen && root.detailEntry !== null
+      visible: shown || opacity > 0.001
+      opacity: shown ? 1 : 0
+      enabled: shown
       anchors.bottom: card.top
       anchors.bottomMargin: 8
-      width: Math.min(340, parent.width - 32)
-      height: 210
+      x: Math.round(Math.max(Style.space(16),
+        Math.min(root.detailAnchorX - width / 2, parent.width - width - Style.space(16))))
+      width: Math.min(Style.space(360), parent.width - 32)
+      height: Math.min(detailColumn.implicitHeight + 2 * detailPanel.detailMargin,
+        Math.min(root.panelMaxHeight, Style.space(460)))
       radius: Style.cornerRadius
       color: Commons.Color.popups.background
       border.color: Commons.Color.popups.border
       border.width: 1
-      layer.enabled: visible
-      layer.effect: PanelBlurEffect { shown: detailPanel.visible }
+      clip: true
+      Behavior on opacity {
+        NumberAnimation { duration: root.panelFadeDuration; easing.type: Easing.OutCubic }
+      }
 
-      Column {
+      readonly property int detailMargin: Style.space(14)
+
+      MouseArea {
         anchors.fill: parent
-        anchors.margins: 14
-        spacing: 6
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+      }
 
-        Text {
-          textFormat: Text.PlainText
-          width: parent.width
-          text: root.detailEntry ? root.detailEntry.name : ""
-          color: Commons.Color.popups.text
-          font.family: Style.font.family
-          font.pixelSize: Style.font.title
-          font.bold: true
-          elide: Text.ElideRight
-        }
+      ScrollView {
+        id: detailScroll
+        anchors.fill: parent
+        anchors.margins: detailPanel.detailMargin
+        anchors.rightMargin: detailPanel.detailMargin + Style.space(26)
+        clip: true
+        ScrollBar.vertical: SlimScrollBar { }
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-        Text {
-          textFormat: Text.PlainText
-          visible: root.detailDesktopEntry && String(root.detailDesktopEntry.genericName || "") !== ""
-          width: parent.width
-          text: root.detailDesktopEntry ? String(root.detailDesktopEntry.genericName || "") : ""
-          color: Commons.Color.popups.text
-          font.family: Style.font.family
-          font.pixelSize: Style.font.body
-          elide: Text.ElideRight
-        }
+        Column {
+          id: detailColumn
+          width: detailScroll.availableWidth
+          spacing: Style.space(10)
 
-        Text {
-          textFormat: Text.PlainText
-          visible: root.detailDesktopEntry && String(root.detailDesktopEntry.comment || "") !== ""
-          width: parent.width
-          text: root.detailDesktopEntry ? String(root.detailDesktopEntry.comment || "") : ""
-          color: Commons.Color.popups.text
-          font.family: Style.font.family
-          font.pixelSize: Style.font.body
-          wrapMode: Text.WordWrap
-        }
+          Row {
+            width: parent.width
+            spacing: Style.space(10)
 
-        Rectangle {
-          width: parent.width
-          height: 1
-          color: Commons.Color.popups.border
-        }
+            Image {
+              width: Style.space(36)
+              height: width
+              source: root.detailEntry ? root.iconPathFor(root.detailEntry.icon) : ""
+              fillMode: Image.PreserveAspectFit
+              smooth: true
+              sourceSize.width: width * 2
+              sourceSize.height: height * 2
+            }
 
-        Text {
-          textFormat: Text.PlainText
-          visible: root.detailDesktopEntry && String(root.detailDesktopEntry.execString || "") !== ""
-          width: parent.width
-          text: root.detailDesktopEntry ? ("Exec : " + String(root.detailDesktopEntry.execString || "")) : ""
-          color: Commons.Color.popups.text
-          font.family: Style.font.family
-          font.pixelSize: Style.font.body
-          elide: Text.ElideRight
-        }
+            Column {
+              width: parent.width - Style.space(46)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(2)
 
-        Text {
-          textFormat: Text.PlainText
-          width: parent.width
-          text: root.detailEntry ? ("Fichier : " + Model.normalizeId(root.detailEntry.id) + ".desktop") : ""
-          color: Commons.Color.popups.text
-          font.family: Style.font.family
-          font.pixelSize: Style.font.body
-          elide: Text.ElideRight
+              Text {
+                width: parent.width
+                text: root.detailEntry ? root.detailEntry.name : ""
+                textFormat: Text.PlainText
+                color: Commons.Color.popups.text
+                font.family: Style.font.family
+                font.pixelSize: Style.font.title
+                font.bold: true
+                elide: Text.ElideRight
+              }
+
+              Text {
+                width: parent.width
+                visible: root.detailDesktopEntry
+                  && String(root.detailDesktopEntry.genericName || "") !== ""
+                text: root.detailDesktopEntry
+                  ? String(root.detailDesktopEntry.genericName || "") : ""
+                textFormat: Text.PlainText
+                color: Commons.Color.popups.text
+                opacity: 0.58
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+                elide: Text.ElideRight
+              }
+            }
+          }
+
+          Text {
+            width: parent.width
+            visible: root.detailDesktopEntry
+              && String(root.detailDesktopEntry.comment || "") !== ""
+            text: root.detailDesktopEntry
+              ? String(root.detailDesktopEntry.comment || "") : ""
+            textFormat: Text.PlainText
+            color: Commons.Color.popups.text
+            opacity: 0.72
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
+          Rectangle {
+            width: parent.width
+            height: 1
+            color: Util.alpha(Commons.Color.popups.text, 0.12)
+          }
+
+          DetailField {
+            label: "Status"
+            value: root.detailStatusText
+          }
+
+          DetailField {
+            label: "Desktop entry"
+            value: root.detailEntry
+              ? Model.normalizeId(root.detailEntry.id) + ".desktop" : ""
+          }
+
+          DetailField {
+            visible: root.detailDesktopEntry
+              && String(root.detailDesktopEntry.execString || "") !== ""
+            label: "Command"
+            value: root.detailDesktopEntry
+              ? String(root.detailDesktopEntry.execString || "") : ""
+            wrapValue: true
+          }
+
+          Ui.Button {
+            visible: root.detailDesktopEntry
+              && String(root.detailDesktopEntry.execString || "") !== ""
+            text: "New window"
+            bordered: true
+            foreground: Commons.Color.popups.text
+            accent: Commons.Color.accent
+            onClicked: {
+              root.launchNewWindow(root.detailEntry)
+              root.dismiss()
+            }
+          }
         }
+      }
+
+      Ui.PanelActionButton {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: Style.space(8)
+        iconText: "×"
+        tooltipText: "Back to the menu"
+        foreground: Commons.Color.popups.text
+        hoverColor: Commons.Color.accent
+        size: Style.space(28)
+        onClicked: root.closeDetails(true)
       }
     }
 
     // ---- Preferences (right-click on empty Quay area) ----
     Rectangle {
       id: prefsMenu
-      visible: root.prefsOpen
+      property bool shown: root.prefsOpen
+      visible: shown || opacity > 0.001
+      opacity: shown ? 1 : 0
+      enabled: shown
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: card.top
       anchors.bottomMargin: 8
-      width: Math.min(900, parent.width - 32)
-      // Three columns keep the panel compact; the cap still protects short
-      // screens and the ScrollView resets to the top on open.
-      height: Math.min(prefsColumns.implicitHeight + 18, root.panelMaxHeight)
+      width: Math.min(Style.space(440), parent.width - 32)
+      height: Math.min(root.prefsHeaderHeight + prefsBody.implicitHeight
+        + root.prefsFooterHeight + 2, root.panelMaxHeight)
       radius: Style.cornerRadius
       color: Commons.Color.popups.background
       border.color: Commons.Color.popups.border
       border.width: 1
-      layer.enabled: visible
-      layer.effect: PanelBlurEffect { shown: prefsMenu.visible }
+      clip: true
+      Behavior on opacity {
+        NumberAnimation { duration: root.panelFadeDuration; easing.type: Easing.OutCubic }
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+      }
+
+      Item {
+        id: prefsHeader
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: root.prefsHeaderHeight
+
+        Text {
+          anchors.left: parent.left
+          anchors.leftMargin: Style.space(14)
+          anchors.verticalCenter: parent.verticalCenter
+          text: "Quay settings"
+          textFormat: Text.PlainText
+          color: Commons.Color.popups.text
+          font.family: Style.font.family
+          font.pixelSize: Style.font.title
+          font.bold: true
+        }
+
+        Ui.PanelActionButton {
+          anchors.right: parent.right
+          anchors.rightMargin: Style.space(7)
+          anchors.verticalCenter: parent.verticalCenter
+          iconText: "×"
+          tooltipText: "Close settings"
+          foreground: Commons.Color.popups.text
+          hoverColor: Commons.Color.accent
+          size: Style.space(30)
+          onClicked: root.closePrefs()
+        }
+      }
+
+      Ui.PanelSeparator {
+        id: prefsHeaderRule
+        anchors.top: prefsHeader.bottom
+        width: parent.width
+        foreground: Commons.Color.popups.text
+      }
 
       ScrollView {
         id: prefsScroll
-        anchors.fill: parent
-        anchors.margins: 6
+        anchors.top: prefsHeaderRule.bottom
+        anchors.bottom: prefsFooter.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Style.space(6)
+        anchors.rightMargin: Style.space(6)
         clip: true
+        ScrollBar.vertical: SlimScrollBar { }
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-        Row {
-          id: prefsColumns
-          width: prefsScroll.availableWidth
-          spacing: 8
-
         Column {
-          id: prefsColA
-          width: (prefsColumns.width - 4 * prefsColumns.spacing - 2) / 3
-          spacing: 2
+          id: prefsBody
+          width: prefsScroll.availableWidth
+          spacing: 0
 
-        PrefsHeader {
-          title: "Placement"
-        }
+          SectionHeader { title: "Placement" }
 
-        MenuRow {
-          id: prefsAuto
-          label: root.screenPref === "" ? "Auto (widest) ✓" : "Auto (widest)"
-          onTriggered: root.setScreenPref("")
-        }
+          MenuRow {
+            id: prefsAuto
+            label: "Automatic (widest screen)"
+            checked: root.screenPref === ""
+            onTriggered: root.setScreenPref("")
+          }
 
-        Repeater {
-          id: prefsScreens
-          model: Quickshell.screens
-          delegate: Rectangle {
-            id: scrRow
-            required property var modelData
-            property bool highlighted: false
-            function trigger() { root.setScreenPref(modelData.name) }
-            width: parent.width
-            height: 34
-            radius: 8
-            color: scrRow.highlighted ? Qt.rgba(1, 1, 1, 0.14) : (scrHover.hovered ? Qt.rgba(1, 1, 1, 0.06) : "transparent")
+          Repeater {
+            id: prefsScreens
+            model: Quickshell.screens
 
-            Text {
-              textFormat: Text.PlainText
-              anchors.left: parent.left
-              anchors.leftMargin: 10
-              anchors.right: parent.right
-              anchors.rightMargin: 10
-              anchors.verticalCenter: parent.verticalCenter
-              text: modelData.name + (root.screenPref === modelData.name ? " ✓" : "")
-              color: Commons.Color.popups.text
-              font.family: Style.font.family
-              font.pixelSize: Style.font.body
-              elide: Text.ElideRight
-            }
-
-            HoverHandler { id: scrHover }
-
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: scrRow.trigger()
+            delegate: MenuRow {
+              required property var modelData
+              label: modelData.name
+              checked: root.screenPref === modelData.name
+              onTriggered: root.setScreenPref(modelData.name)
             }
           }
-        }
 
-        Rectangle {
+          Ui.PanelSeparator {
+            width: parent.width
+            foreground: Commons.Color.popups.text
+          }
+
+          SectionHeader { title: "Behavior" }
+
+          PrefsToggleRow {
+            id: prefsShowOnHover
+            label: "Hover reveal"
+            description: "ALT + SPACE always opens Quay."
+            checked: root.showOnHover
+            onPicked: root.setShowOnHover(value)
+          }
+
+          PrefsRow {
+            id: prefsHideDelay
+            label: "Hide delay"
+            options: [500, 1000, 1500, 2000, 3000]
+            current: root.hideDelay
+            formatValue: function(value) { return (value / 1000) + " s" }
+            onPicked: root.setHideDelay(value)
+          }
+
+          PrefsToggleRow {
+            id: prefsShowName
+            label: "Name tooltip"
+            checked: root.showName
+            onPicked: root.setShowName(value)
+          }
+
+          Ui.PanelSeparator {
+            width: parent.width
+            foreground: Commons.Color.popups.text
+          }
+
+          SectionHeader { title: "Dock" }
+
+          PrefsRow {
+            id: prefsIconSize
+            label: "Icon size"
+            options: [32, 36, 40, 44, 48, 52, 56, 60, 64]
+            current: root.iconSize
+            formatValue: function(value) { return value + " px" }
+            onPicked: root.setIconSize(value)
+          }
+
+          PrefsRow {
+            id: prefsZoom
+            label: "Hover zoom"
+            options: [1.3, 1.5, 1.8]
+            current: root.zoom
+            formatValue: function(value) { return value + "×" }
+            onPicked: root.setZoom(value)
+          }
+
+          PrefsRow {
+            id: prefsGap
+            label: "Icon gap"
+            options: [0, 2, 4, 6, 8, 10, 12, 16, 20, 24]
+            current: root.iconSpacing
+            formatValue: function(value) { return value + " px" }
+            onPicked: root.setIconSpacing(value)
+          }
+
+          PrefsRow {
+            id: prefsPadX
+            label: "Padding X"
+            options: [4, 8, 12, 16, 20, 24]
+            current: root.paddingX
+            formatValue: function(value) { return value + " px" }
+            onPicked: root.setPaddingX(value)
+          }
+
+          PrefsRow {
+            id: prefsPadY
+            label: "Padding Y"
+            options: [2, 4, 5, 6, 8, 10, 12, 16]
+            current: root.paddingY
+            formatValue: function(value) { return value + " px" }
+            onPicked: root.setPaddingY(value)
+          }
+
+          Ui.PanelSeparator {
+            width: parent.width
+            foreground: Commons.Color.popups.text
+          }
+
+          SectionHeader { title: "App grid" }
+
+          PrefsRow {
+            id: prefsGridColumns
+            label: "Columns"
+            options: [3, 4, 5, 6, 7, 8, 9, 10, 12]
+            current: root.gridColumns
+            formatValue: function(value) { return String(value) }
+            onPicked: root.setGridColumns(value)
+          }
+
+          PrefsRow {
+            id: prefsGridRows
+            label: "Visible rows"
+            options: [1, 2, 3, 4, 5, 6, 8, 10]
+            current: root.gridRows
+            formatValue: function(value) { return String(value) }
+            onPicked: root.setGridRows(value)
+          }
+
+          PrefsToggleRow {
+            id: prefsGridLabels
+            label: "Tile labels"
+            checked: root.gridShowLabels
+            onPicked: root.setGridShowLabels(value)
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            leftPadding: Style.space(10)
+            rightPadding: Style.space(10)
+            topPadding: Style.space(2)
+            bottomPadding: Style.space(4)
+            text: "Type while Quay is open to start a search."
+            color: Commons.Color.popups.text
+            opacity: 0.42
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          Ui.PanelSeparator {
+            width: parent.width
+            foreground: Commons.Color.popups.text
+          }
+
+          SectionHeader { title: "Bar motion" }
+
+          PrefsRow {
+            id: prefsAnimMode
+            label: "Bar animation"
+            options: root.animationModes
+            current: root.animMode
+            formatValue: function(value) { return root.animationLabel(value) }
+            onPicked: root.setAnimMode(value)
+          }
+
+          PrefsRow {
+            id: prefsSpeed
+            label: "Bar speed"
+            options: ["fast", "normal", "slow"]
+            current: root.animSpeed
+            formatValue: function(value) {
+              return value.charAt(0).toUpperCase() + value.slice(1)
+            }
+            onPicked: root.setAnimSpeed(value)
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            leftPadding: Style.space(10)
+            rightPadding: Style.space(10)
+            topPadding: Style.space(2)
+            bottomPadding: Style.space(4)
+            text: "Menus and the app grid always use their own fixed fade."
+            color: Commons.Color.popups.text
+            opacity: 0.42
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          Ui.PanelSeparator {
+            width: parent.width
+            foreground: Commons.Color.popups.text
+          }
+
+          SectionHeader { title: "About" }
+
+          PrefsInfo {
+            label: "Shortcut"
+            value: "ALT + SPACE"
+          }
+
+          PrefsInfo {
+            visible: root.quayVersion !== ""
+            label: "Version"
+            value: root.quayVersion
+          }
+
+          Item { width: 1; height: Style.space(6) }
+        }
+      }
+
+      Item {
+        id: prefsFooter
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: root.prefsFooterHeight
+
+        Ui.PanelSeparator {
+          anchors.top: parent.top
           width: parent.width
-          height: 1
-          color: Commons.Color.popups.border
-        }
-
-        PrefsHeader {
-          title: "Behavior"
-        }
-
-        PrefsChoice {
-          id: prefsHideDelay
-          label: "Hide delay"
-          options: [500, 1000, 1500, 2000, 3000]
-          current: root.hideDelay
-          formatValue: function(value) { return (value / 1000) + " s" }
-          onPicked: root.setHideDelay(value)
-        }
-
-        PrefsChoice {
-          id: prefsShowName
-          label: "Name tooltip"
-          options: ["On", "Off"]
-          current: root.showName ? "On" : "Off"
-          onPicked: root.setShowName(value === "On")
-        }
-
-        PrefsChoice {
-          id: prefsShowOnHover
-          label: "Hover reveal"
-          options: ["On", "Off"]
-          current: root.showOnHover ? "On" : "Off"
-          onPicked: root.setShowOnHover(value === "On")
+          foreground: Commons.Color.popups.text
         }
 
         Text {
+          anchors.left: parent.left
+          anchors.leftMargin: Style.space(12)
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.verticalCenterOffset: Style.space(1)
+          text: "Changes save automatically"
           textFormat: Text.PlainText
-          width: parent.width
-          leftPadding: 10
-          rightPadding: 10
-          text: "ALT + SPACE always opens Quay."
           color: Commons.Color.popups.text
-          opacity: 0.65
+          opacity: 0.42
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
         }
 
-        }
-
-        Rectangle {
-          width: 1
-          height: Math.max(prefsColA.height, prefsColB.height, prefsColC.height)
-          color: Commons.Color.popups.border
-        }
-
-        Column {
-          id: prefsColB
-          width: (prefsColumns.width - 4 * prefsColumns.spacing - 2) / 3
-          spacing: 2
-
-        PrefsHeader {
-          title: "Appearance"
-        }
-
-        PrefsChoice {
-          id: prefsIconSize
-          label: "Icon size"
-          options: [32, 36, 40, 44, 48, 52, 56, 60, 64]
-          current: root.iconSize
-          formatValue: function(value) { return value + " px" }
-          onPicked: root.setIconSize(value)
-        }
-
-        PrefsChoice {
-          id: prefsZoom
-          label: "Hover zoom"
-          options: [1.3, 1.5, 1.8]
-          current: root.zoom
-          formatValue: function(value) { return value + "×" }
-          onPicked: root.setZoom(value)
-        }
-
-        PrefsChoice {
-          id: prefsGap
-          label: "Icon gap"
-          options: [0, 2, 4, 6, 8, 10, 12, 16, 20, 24]
-          current: root.iconSpacing
-          formatValue: function(value) { return value + " px" }
-          onPicked: root.setIconSpacing(value)
-        }
-
-        PrefsChoice {
-          id: prefsPadX
-          label: "Padding X"
-          options: [4, 8, 12, 16, 20, 24]
-          current: root.paddingX
-          formatValue: function(value) { return value + " px" }
-          onPicked: root.setPaddingX(value)
-        }
-
-        PrefsChoice {
-          id: prefsPadY
-          label: "Padding Y"
-          options: [2, 4, 6, 8, 10, 12, 16]
-          current: root.paddingY
-          formatValue: function(value) { return value + " px" }
-          onPicked: root.setPaddingY(value)
-        }
-
-        Rectangle {
-          width: parent.width
-          height: 1
-          color: Commons.Color.popups.border
-        }
-
-        PrefsHeader {
-          title: "App grid"
-        }
-
-        PrefsChoice {
-          id: prefsGridColumns
-          label: "Columns"
-          options: [3, 4, 5, 6, 7, 8, 9, 10, 12]
-          current: root.gridColumns
-          formatValue: function(value) { return value + "" }
-          onPicked: root.setGridColumns(value)
-        }
-
-        PrefsChoice {
-          id: prefsGridRows
-          label: "Visible rows"
-          options: [1, 2, 3, 4, 5, 6, 8, 10]
-          current: root.gridRows
-          formatValue: function(value) { return value + "" }
-          onPicked: root.setGridRows(value)
-        }
-
-        PrefsChoice {
-          id: prefsGridLabels
-          label: "Tile labels"
-          options: ["On", "Off"]
-          current: root.gridShowLabels ? "On" : "Off"
-          onPicked: root.setGridShowLabels(value === "On")
-        }
-
-        Text {
-          textFormat: Text.PlainText
-          width: parent.width
-          leftPadding: 10
-          rightPadding: 10
-          text: "Type while Quay is open to search."
-          color: Commons.Color.popups.text
-          opacity: 0.65
-          font.family: Style.font.family
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
-
-        }
-
-        Rectangle {
-          width: 1
-          height: Math.max(prefsColA.height, prefsColB.height, prefsColC.height)
-          color: Commons.Color.popups.border
-        }
-
-        Column {
-          id: prefsColC
-          width: (prefsColumns.width - 4 * prefsColumns.spacing - 2) / 3
-          spacing: 2
-
-        PrefsHeader {
-          title: "Motion"
-        }
-
-        PrefsChoice {
-          id: prefsAnimMode
-          label: "Mode"
-          options: root.animationModes
-          current: root.animMode
-          formatValue: function(value) { return root.animationLabel(value) }
-          onPicked: root.setAnimMode(value)
-        }
-
-        PrefsChoice {
-          id: prefsSpeed
-          label: "Speed"
-          options: ["fast", "normal", "slow"]
-          current: root.animSpeed
-          formatValue: function(value) { return value.charAt(0).toUpperCase() + value.slice(1) }
-          onPicked: root.setAnimSpeed(value)
-        }
-        }
+        KeyHint {
+          anchors.right: parent.right
+          anchors.rightMargin: Style.space(12)
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.verticalCenterOffset: Style.space(1)
+          keys: "Esc"
+          label: "Close"
         }
       }
     }
